@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gestión de Facturas SII — Río Claro</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">
+async function cargarSII(file) {
+  if (!file) return;
+  const un = document.getElementById('uploadNotif');
+  un.className = 'notif show info'; un.textContent = 'Leyendo archivo...';
+  const reader = new FileReader();
+  reader.onload = async function(e) {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'binary', cellDates:false});
+      const sh = wb.Sheets['Facturas SII'];
+      if (!sh) { un.className='notif show err'; un.textContent='Error: No se encontro la hoja "Facturas SII"'; return; }
+      const rows = XLSX.utils.sheet_to_json(sh, {header:1, defval:''});
+      const headers = rows[0].map(h => String(h).trim().toLowerCase());
+      const ci = k => headers.findIndex(h => h.includes(k.toLowerCase()));
+      const iRut=ci('rut proveedor'), iNom=ci('razon social'), iFol=ci('folio');
+      const iFDoc=ci('fecha docto'), iFVen=ci('fecha de vencimiento sii'), iMon=ci('monto total');
+      const iEV=ci('estado vencimiento'), iAbr=ci('abreviaci'), iArea=ci('área'), iFInf=ci('fecha informe');
+      const dataRows = rows.slice(1).filter(r => r[iFol]);
+      const fechas = dataRows.map(r => Number(r[iFInf])).filter(f => f && !isNaN(f));
+      if (!fechas.length) { un.className='notif show err'; un.textContent='Error: No se encontro columna Fecha Informe'; return; }
+      const maxFecha = Math.max(...fechas);
+      const filtered = dataRows.filter(r => Number(r[iFInf]) === maxFecha);
+      const empMap = {'FRC':'Forestal Río Claro','EXP':'Exportadora Río Claro','LYT':'Logística y Transporte','frc':'Forestal Río Claro','exp':'Exportadora Río Claro','lyt':'Logística y Transporte'};
+      const nuevas = filtered.map(r => ({
+        empresa: empMap[String(r[iAbr]).trim()] || String(r[iAbr]||'').trim(),
+        rut: String(r[iRut]||'').trim(),
+        nombre: String(r[iNom]||'').trim(),
+        folio: r[iFol],
+        fd: Number(r[iFDoc])||0,
+        fv: Number(r[iFVen])||0,
+        monto: Number(r[iMon])||0,
+        ev: String(r[iEV]||'').trim(),
+        area: String(r[iArea]||'').trim()
+      })).filter(r => r.rut && r.folio);
+      if (!nuevas.length) { un.className='notif show err'; un.textContent='Error: Sin facturas para la fecha mas reciente'; return; }
+      facturas.splice(0, facturas.length, ...nuevas);
+      const newKeys = new Set(nuevas.map(f => dk(f)));
+      Object.keys(decisions).forEach(k => { if (!newKeys.has(k)) delete decisions[k]; });
+      un.textContent = 'Guardando en la nube...';
+      const binData = await readBin() || {};
+      // Full reset: new file = clean slate (keep only users)
+      const freshBin = {
+        facturas: nuevas,
+        fechaInforme: maxFecha,
+        uploadedBy: currentUser,
+        decisions: {},
+        activity: [],
+        users: binData.users || {}
+      };
+      decisions = {};
+      activity = [];
+      const writeOk = await writeBin(freshBin);
+      if (!writeOk) {
+        un.className = 'notif show err';
+        un.textContent = 'Error al guardar en la nube. Intenta de nuevo.';
+        return;
+      }
+      un.className = 'notif show ok';
+      un.textContent = '✓ ' + nuevas.length + ' facturas cargadas · Fecha informe: ' + exD(maxFecha) + ' · Todos los usuarios veran los cambios en segundos';
+      document.getElementById('fechaInformePill').style.display = 'inline-flex';
+      document.getElementById('fechaInformeTxt').textContent = exD(maxFecha);
+      updateStats(); rG();
+      document.getElementById('uploadSII').value = '';
+      setTimeout(() => un.classList.remove('show'), 7000);
+    } catch(err) { un.className='notif show err'; un.textContent='Error: ' + err.message; }
+  };
+  reader.readAsBinaryString(file);
+}
+
+
+const SP_URL = 'https://gfrc-my.sharepoint.com/:x:/g/personal/mmolina_retamal_gfrc_cl/IQDUQsdPNPqCR5ApI4fe0o4kAZZXwXaYUQzvYTXN-MLrt8w?download=1';
+
+function toggleSIIMenu() {
+  const d = document.getElementById('siiDropdown');
+  d.style.display = d.style.display === 'none' ? '' : 'none';
+}
+function closeSIIMenu() {
+  document.getElementById('siiDropdown').style.display = 'none';
+}
+document.addEventListener('click', function(e) {
+  if (!document.getElementById('siiMenu').contains(e.target)) closeSIIMenu();
+});
+
+async function cargarDesdeSP() {
+  const un = document.getElementById('uploadNotif');
+  un.className = 'notif show info'; un.textContent = '☁️ Descargando desde SharePoint...';
+  try {
+    const resp = await fetch(SP_URL);
+    if (!resp.ok) throw new Error('No se pudo descargar el archivo (código ' + resp.status + ')');
+    const blob = await resp.blob();
+    const file = new File([blob], 'BD_Facturas_Pendientes.xlsx', {type: blob.type});
+    un.textContent = '☁️ Archivo descargado, procesando...';
+    await cargarSII(file);
+  } catch(err) {
+    un.className = 'notif show err';
+    un.textContent = '❌ Error al descargar desde SharePoint: ' + err.message;
+  }
+}
+
+</script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F7F6F3;--surface:#FFFFFF;--surface2:#F0EEE9;
+  --txt:#1C1B18;--txt2:#6B6960;--txt3:#A8A59E;
+  --green:#2D6A2D;--green-bg:#EAF3E0;
+  --red:#8B2020;--red-bg:#FCEAEA;
+  --amber:#7A4F00;--amber-bg:#FDF3DC;
+  --blue:#1A4A7A;--blue-bg:#E8F0FA;
+  --border:#E2DFD8;--border2:#C8C4BB;
+  --r:6px;--rl:10px;
+  --font:'IBM Plex Sans',sans-serif;
+  --mono:'IBM Plex Mono',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--txt);font-size:13px;line-height:1.5;min-height:100vh}
+
+#loginScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);width:100%;max-width:440px;overflow:hidden}
+.login-top{background:var(--txt);color:#fff;padding:28px 32px}
+.login-top h1{font-size:20px;font-weight:500;letter-spacing:-0.3px;margin-bottom:4px}
+.login-top p{font-size:12px;opacity:0.55;font-family:var(--mono)}
+.login-body{padding:28px 32px}
+.field-lbl{display:block;font-size:11px;font-weight:500;color:var(--txt2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.chip{padding:5px 12px;border-radius:99px;border:1px solid var(--border2);font-size:12px;cursor:pointer;transition:all 0.15s;background:var(--surface)}
+.chip:hover{border-color:var(--txt)}
+.chip.sel{background:var(--txt);color:#fff;border-color:var(--txt)}
+input.fi{width:100%;padding:9px 12px;border:1px solid var(--border2);border-radius:var(--r);font-family:var(--font);font-size:13px;background:var(--bg);color:var(--txt);outline:none;transition:border-color 0.15s;margin-bottom:16px}
+input.fi:focus{border-color:var(--txt)}
+.btn-enter{width:100%;padding:10px;background:var(--txt);color:#fff;border:none;border-radius:var(--r);font-family:var(--font);font-size:13px;font-weight:500;cursor:pointer;letter-spacing:0.2px}
+.btn-enter:hover{opacity:0.85}
+.divider{height:1px;background:var(--border);margin:16px 0}
+
+#app{display:none;min-height:100vh;flex-direction:column}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;justify-content:space-between;height:52px;position:sticky;top:0;z-index:100}
+.logo{font-size:13px;font-weight:600;letter-spacing:-0.2px}
+.logo span{font-family:var(--mono);font-size:11px;font-weight:400;color:var(--txt2);margin-left:6px}
+.sync-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-family:var(--mono);padding:3px 9px;border-radius:99px;border:1px solid var(--border)}
+.sync-pill.ok{color:var(--green);border-color:#B8D9B8;background:var(--green-bg)}
+.sync-pill.syncing{color:var(--amber);border-color:#F0D89A;background:var(--amber-bg)}
+.sync-pill.err{color:var(--red);border-color:#F0B8B8;background:var(--red-bg)}
+.sdot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.syncing .sdot{animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
+.topbar-right{display:flex;align-items:center;gap:8px}
+.user-badge{display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:99px;font-size:12px}
+.uavatar{width:20px;height:20px;border-radius:50%;background:var(--txt);color:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600}
+button.tb{background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);padding:5px 11px;font-family:var(--font);font-size:12px;cursor:pointer;color:var(--txt);transition:background 0.1s}
+button.tb:hover{background:var(--surface2)}
+button.tb.gn{background:var(--green-bg);border-color:#9FCC9F;color:var(--green)}
+
+.stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-bottom:1px solid var(--border)}
+.stat{background:var(--surface);padding:14px 20px}
+.stat-lbl{font-size:10px;font-family:var(--mono);color:var(--txt3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
+.stat-val{font-size:26px;font-weight:300;letter-spacing:-1px;font-family:var(--mono)}
+.gn{color:var(--green)}.rd{color:var(--red)}.am{color:var(--amber)}
+
+.main{flex:1;padding:20px 24px}
+.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:16px}
+.tab{background:none;border:none;border-bottom:2px solid transparent;padding:8px 16px;font-family:var(--font);font-size:12px;color:var(--txt2);cursor:pointer;margin-bottom:-1px}
+.tab:hover{color:var(--txt)}
+.tab.active{color:var(--txt);border-bottom-color:var(--txt);font-weight:500}
+
+.filters{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px;align-items:center}
+.filters select,.filters input{font-family:var(--font);font-size:11px;padding:5px 8px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface);color:var(--txt);height:28px;outline:none}
+
+.tw{overflow-x:auto;border:1px solid var(--border);border-radius:var(--rl);background:var(--surface)}
+table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+th{background:var(--surface2);font-weight:500;font-size:10px;font-family:var(--mono);color:var(--txt2);padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:0.3px}
+td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--txt);vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#FAFAF8}
+.monto{text-align:right;font-family:var(--mono);font-size:11px}
+.folio{font-family:var(--mono);font-size:11px}
+
+.badge{display:inline-flex;align-items:center;font-size:10px;padding:2px 7px;border-radius:3px;font-weight:500;white-space:nowrap;font-family:var(--mono)}
+.b-pend{background:var(--amber-bg);color:var(--amber)}
+.b-ok{background:var(--green-bg);color:var(--green)}
+.b-rej{background:var(--red-bg);color:var(--red)}
+.b-venc{background:#FCEAEA;color:#6B1515}
+.b-crit{background:#FDE8DC;color:#7A3010}
+.b-mod{background:#FDF3DC;color:var(--amber)}
+.b-opt{background:var(--green-bg);color:var(--green)}
+
+select.dec{font-family:var(--font);font-size:11px;padding:4px 6px;border-radius:var(--r);border:1px solid var(--border2);background:var(--surface);color:var(--txt);cursor:pointer;min-width:108px;outline:none}
+select.dec:disabled{pointer-events:none;opacity:0.85}
+select.dec.aprobada{border-color:#9FCC9F;background:var(--green-bg);color:var(--green)}
+select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--red)}
+.ulk{padding:3px 6px;font-size:10px;border-radius:var(--r);border:1px solid #F0D89A;background:var(--amber-bg);color:var(--amber);cursor:pointer;display:none;font-family:var(--font)}
+
+.notif{padding:10px 14px;border-radius:var(--r);font-size:12px;margin-bottom:12px;display:none;align-items:center;gap:8px;border:1px solid}
+.notif.show{display:flex}
+.notif.ok{background:var(--green-bg);color:var(--green);border-color:#9FCC9F}
+.notif.err{background:var(--red-bg);color:var(--red);border-color:#F0B8B8}
+.notif.info{background:var(--blue-bg);color:var(--blue);border-color:#A8C4E8}
+
+.feed{border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;background:var(--surface)}
+.feed-hdr{background:var(--surface2);padding:10px 14px;font-size:11px;font-weight:500;font-family:var(--mono);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:0.5px;color:var(--txt2)}
+.fi2{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start}
+.fi2:last-child{border-bottom:none}
+.fdot{width:7px;height:7px;border-radius:50%;margin-top:5px;flex-shrink:0}
+.fdot.ok{background:var(--green)}
+.fdot.rej{background:var(--red)}
+.ftxt{flex:1}
+.ftxt strong{font-weight:500;font-size:11px}
+.ftxt small{font-size:10px;color:var(--txt2);display:block;margin-top:1px;font-family:var(--mono)}
+.ftime{font-size:10px;color:var(--txt3);font-family:var(--mono);white-space:nowrap}
+.pbar-wrap{margin-bottom:12px}
+.pbar-lbl{display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px}
+.pbar-lbl span:last-child{font-family:var(--mono);color:var(--txt2)}
+.pbar{height:5px;background:var(--surface2);border-radius:99px;overflow:hidden}
+.pbar-fill{height:100%;background:var(--green);border-radius:99px;transition:width 0.4s}
+.pbar-sub{display:flex;gap:12px;margin-top:3px;font-size:10px;font-family:var(--mono)}
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div class="login-card">
+    <div class="login-top">
+      <h1>Gestión de Facturas SII</h1>
+      <p>Forestal Río Claro · Sistema colaborativo</p>
+    </div>
+    <div class="login-body">
+      <label class="field-lbl">¿Quién eres?</label>
+      <div class="chips" id="chipRow"></div>
+      <input class="fi" id="nameInput" placeholder="O escribe tu nombre..." maxlength="40" />
+      <button class="btn-enter" onclick="entrar()">Entrar →</button>
+    </div>
+  </div>
+</div>
+
+<div id="app" style="display:none;flex-direction:column">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:14px">
+      <span class="logo">Facturas SII <span>Río Claro</span></span>
+      <span class="sync-pill" id="syncPill"><span class="sdot"></span><span id="syncTxt">Conectando...</span></span>
+      <span id="fechaInformePill" style="display:none;font-size:11px;font-family:var(--mono);padding:3px 10px;border-radius:99px;border:1px solid var(--border2);background:var(--surface2);color:var(--txt2)">📅 Informe: <strong id="fechaInformeTxt">—</strong></span>
+      <span id="onlineSpan" style="font-size:11px;color:var(--txt2)"></span>
+    </div>
+    <div class="topbar-right">
+      <div class="user-badge"><div class="uavatar" id="avatarIcon"></div><span id="userLbl"></span></div>
+      <button class="tb gn" onclick="exportXlsx()">↓ Excel</button>
+      <div style="position:relative;display:none" id="siiMenu">
+        <button class="tb" onclick="toggleSIIMenu()" style="background:var(--blue-bg);border-color:#A8C4E8;color:var(--blue)">↑ Cargar SII ▾</button>
+        <div id="siiDropdown" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--border2);border-radius:var(--r);box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:200;min-width:200px;overflow:hidden">
+          <div onclick="document.getElementById('uploadSII').click();closeSIIMenu()" style="padding:10px 16px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">💻 Desde mi computador</div>
+          <div onclick="cargarDesdeSP();closeSIIMenu()" style="padding:10px 16px;cursor:pointer;font-size:12px" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">☁️ Desde SharePoint</div>
+        </div>
+        <input type="file" id="uploadSII" accept=".xlsx,.xlsm,.xls" style="display:none" onchange="cargarSII(this.files[0])"/>
+      </div>
+      <button class="tb" onclick="salir()">Salir</button>
+    </div>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat"><div class="stat-lbl">Total</div><div class="stat-val" id="sT">60</div></div>
+    <div class="stat"><div class="stat-lbl">Aprobadas</div><div class="stat-val gn" id="sA">0</div></div>
+    <div class="stat"><div class="stat-lbl">Rechazadas</div><div class="stat-val rd" id="sR">0</div></div>
+    <div class="stat"><div class="stat-lbl">Pendientes</div><div class="stat-val am" id="sP">60</div></div>
+  </div>
+
+  <div class="main">
+    <div class="notif" id="notif"></div>
+    <div class="notif" id="uploadNotif"></div>
+    <div class="tabs">
+      <button class="tab active" onclick="showTab('g')">Gestión de aprobación</button>
+      <button class="tab" onclick="showTab('s')">Base de datos SII</button>
+      <button class="tab" onclick="showTab('a')">Actividad</button>
+    </div>
+
+    <div id="tg">
+      <div class="filters">
+        <select id="fg-e" onchange="rG()"><option value="">Todas las empresas</option><option>Forestal Río Claro</option><option>Exportadora Río Claro</option><option>Logística y Transporte</option></select>
+        <select id="fg-s" onchange="rG()"><option value="">Todos los estados</option><option value="pendiente">Pendientes</option><option value="aprobada">Aprobadas</option><option value="rechazada">Rechazadas</option></select>
+        <select id="fg-v" onchange="rG()"><option value="">Todos los vencimientos</option><option value="vencida">⛔ Vencidas</option><option value="critico">🔴 Crítico</option><option value="moderado">🟡 Moderado</option><option value="optimo">🟢 Óptimo</option></select>
+        <input id="fg-b" placeholder="Buscar proveedor, folio, RUT..." oninput="rG()" style="width:190px">
+        <button class="tb" onclick="clearF()" style="height:28px;padding:0 10px;font-size:11px">✕ Limpiar</button>
+        <button class="tb" onclick="syncNow(true)" style="height:28px;padding:0 10px;font-size:11px">↻ Actualizar</button>
+      </div>
+      <div class="tw">
+        <table>
+          <colgroup><col style="width:118px"><col style="width:86px"><col style="width:170px"><col style="width:60px"><col style="width:76px"><col style="width:76px"><col style="width:82px"><col style="width:72px"><col style="width:112px"><col style="width:148px"></colgroup>
+          <thead><tr><th>EMPRESA</th><th>RUT</th><th>PROVEEDOR</th><th>FOLIO</th><th>FECHA DOC.</th><th>VENC. SII</th><th>MONTO</th><th>VENCIMIENTO</th><th>DECISIÓN</th><th>RESPONSABLE / FECHA</th></tr></thead>
+          <tbody id="tbG"></tbody>
+        </table>
+      </div>
+      <p style="font-size:10px;color:var(--txt3);margin-top:8px;font-family:var(--mono)">🔒 Al tomar una decisión la fila se bloquea. Solo tú puedes desbloquear tus propias decisiones. La app sincroniza cada 8 segundos.</p>
+    </div>
+
+    <div id="ts" style="display:none">
+      <div class="filters">
+        <select id="fs-e" onchange="rS()"><option value="">Todas</option><option value="FRC">Forestal Río Claro</option><option value="EXP">Exportadora Río Claro</option><option value="LYT">Logística y Transporte</option></select>
+        <select id="fs-v" onchange="rS()"><option value="">Todos los vencimientos</option><option value="vencida">⛔ Vencidas</option><option value="critico">🔴 Crítico</option><option value="moderado">🟡 Moderado</option><option value="optimo">🟢 Óptimo</option></select>
+        <select id="fs-s" onchange="rS()"><option value="">Todos los estados</option><option value="aprobada">Aprobadas</option><option value="rechazada">Rechazadas</option><option value="pendiente">Pendientes</option></select>
+        <input id="fs-b" placeholder="Buscar..." oninput="rS()" style="width:160px">
+      </div>
+      <div class="tw">
+        <table>
+          <colgroup><col style="width:34px"><col style="width:86px"><col style="width:180px"><col style="width:60px"><col style="width:76px"><col style="width:76px"><col style="width:82px"><col style="width:128px"><col style="width:90px"><col style="width:96px"></colgroup>
+          <thead><tr><th>#</th><th>RUT</th><th>RAZÓN SOCIAL</th><th>FOLIO</th><th>FECHA DOC.</th><th>VENC. SII</th><th>MONTO</th><th>ESTADO VENCIMIENTO</th><th>EMPRESA</th><th>APROBACIÓN</th></tr></thead>
+          <tbody id="tbS"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="ta" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div class="feed">
+          <div class="feed-hdr">Últimas decisiones</div>
+          <div id="feedList" style="max-height:400px;overflow-y:auto"><div style="padding:20px;text-align:center;color:var(--txt3);font-size:12px;font-family:var(--mono)">Sin actividad aún</div></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="feed">
+            <div class="feed-hdr">Usuarios activos</div>
+            <div id="userFeed" style="max-height:160px;overflow-y:auto"><div style="padding:16px;text-align:center;color:var(--txt3);font-size:12px;font-family:var(--mono)">Solo tú</div></div>
+          </div>
+          <div class="feed">
+            <div class="feed-hdr">Progreso por empresa</div>
+            <div id="progreso" style="padding:14px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const JSONBIN_KEY = '$2a$10$OvelDABH3ngB4TYLNrCiLegP.BQHfiU9NjQZTLSzMCKylw.OEeRFu';
+const JSONBIN_URL = 'https://api.jsonbin.io/v3/b';
+let BIN_ID = '6a1604fe8ef04f45381ec5a9';
+
+const KNOWN = ["FRANCISCO GUTIERREZ","MELISSA MOLINA","ÁNGEL DURAN","PABLO MORALES","ADQUISICIONES","MARICEL NICOLAO","KARINA SEPÚLVEDA","CONTABILIDAD"];
+let currentUser = null;
+let decisions = {};
+let activity = [];
+let pollTimer = null;
+
+const exD = n => { if(!n||isNaN(n)) return ''; const ms=Math.round((n-25569)*86400000); const d=new Date(ms); const utc=new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()); return utc.toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric'}); };
+const fmtM = n => n?'$'+Math.round(n).toLocaleString('es-CL'):'-';
+const vcls = v => { if(!v) return ''; const s=v.toLowerCase(); if(s.includes('vencid')) return 'vencida'; if(s.includes('crít')||s.includes('crit')) return 'critico'; if(s.includes('moder')) return 'moderado'; return 'optimo'; };
+const vBadge = v => { const c=vcls(v); const m={vencida:'b-venc',critico:'b-crit',moderado:'b-mod',optimo:'b-opt'}; return `<span class="badge ${m[c]||''}">${v}</span>`; };
+const eBadge = v => { if(!v||v==='pendiente') return `<span class="badge b-pend">Pendiente</span>`; if(v==='aprobada') return `<span class="badge b-ok">✓ Aprobada</span>`; return `<span class="badge b-rej">✗ Rechazada</span>`; };
+const dk = r => `${r.rut}_${r.folio}`;
+const initials = n => n.split(' ').slice(0,2).map(w=>w[0]).join('').toUpperCase();
+
+let facturas = [
+  {empresa:'Forestal Río Claro',rut:'76039758-K',nombre:'Cia. Seguros Generales Continental S.A.',folio:304921,fd:46168,fv:46175,monto:1130748,ev:'⛔ Vencidas'},
+  {empresa:'Forestal Río Claro',rut:'99225000-3',nombre:'CHUBB SEGUROS CHILE S.A.',folio:4244520,fd:46166,fv:46175,monto:12697,ev:'⛔ Vencidas'},
+  {empresa:'Forestal Río Claro',rut:'76363534-1',nombre:'AVLA SEGUROS DE CREDITO Y GARANTIA S.A',folio:304316,fd:46169,fv:46175,monto:7903931,ev:'⛔ Vencidas'},
+  {empresa:'Forestal Río Claro',rut:'78294589-0',nombre:'GRUPO METANEK SPA',folio:397,fd:46170,fv:46175,monto:356180,ev:'🔴 Riesgo Crítico'},
+  {empresa:'Forestal Río Claro',rut:'76584218-2',nombre:'LINQ SPA',folio:177209,fd:46170,fv:46176,monto:227170,ev:'🔴 Riesgo Crítico'},
+  {empresa:'Forestal Río Claro',rut:'76584218-2',nombre:'LINQ SPA',folio:177210,fd:46170,fv:46176,monto:624075,ev:'🔴 Riesgo Crítico'},
+  {empresa:'Forestal Río Claro',rut:'76037035-5',nombre:'NELSON ARTURO BRUGGINK ZUBER',folio:1677,fd:46170,fv:46176,monto:2499000,ev:'🔴 Riesgo Crítico'},
+  {empresa:'Forestal Río Claro',rut:'76335974-3',nombre:'BELLEVILLE SPA',folio:5753,fd:46172,fv:46178,monto:183070,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'76880070-7',nombre:'PROSEGUR ACTIVA SERVICIOS CHILE LTDA',folio:2005883,fd:46168,fv:46178,monto:126518,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'78015800-K',nombre:'COMERCIALIZADORA RODACAR LIMITADA',folio:214867,fd:46173,fv:46179,monto:67354,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'76058647-1',nombre:'VERISURE CHILE SPA',folio:12470547,fd:46173,fv:46179,monto:243935,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'76058647-1',nombre:'VERISURE CHILE SPA',folio:12470551,fd:46173,fv:46179,monto:273652,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'76058647-1',nombre:'VERISURE CHILE SPA',folio:12470573,fd:46173,fv:46179,monto:261783,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'76058647-1',nombre:'VERISURE CHILE SPA',folio:12470592,fd:46173,fv:46179,monto:255832,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'76058647-1',nombre:'VERISURE CHILE SPA',folio:12470597,fd:46173,fv:46179,monto:309374,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'77261280-K',nombre:'FALABELLA RETAIL S.A.',folio:5641233,fd:46174,fv:46180,monto:16500,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'77406040-5',nombre:'COMERCIAL KPC CHILE LIMITADA',folio:21575,fd:46175,fv:46181,monto:44966006,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'18029042-7',nombre:'JUAN IGNACIO BECERRA CAMPOS',folio:330,fd:46175,fv:46181,monto:4907917,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76188345-3',nombre:'MADERAS GARRIMAR SPA',folio:1959,fd:46175,fv:46181,monto:12482505,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76697379-5',nombre:'BALSU INDUSTRIES CHILE SpA',folio:1,fd:46172,fv:46181,monto:617610,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76697379-5',nombre:'BALSU INDUSTRIES CHILE SpA',folio:2,fd:46175,fv:46181,monto:701862,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76299244-2',nombre:'PROTEKNICA S.A',folio:784257,fd:46175,fv:46181,monto:534310,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'10360836-8',nombre:'ROMILIO ANTONIO ACEVEDO OPAZO',folio:1053,fd:46175,fv:46181,monto:27133904,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76585090-8',nombre:'SOCIEDAD UMANA Y MORALES LIMITADA',folio:22025,fd:46175,fv:46181,monto:360000,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'12787200-7',nombre:'JOSE RAUL SANCHEZ CACERES',folio:723,fd:46175,fv:46181,monto:95200,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'78091192-1',nombre:'COMERCIALIZADORA DE MADERAS DANILO ESPINOZA',folio:127,fd:46175,fv:46181,monto:14370619,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'77888352-K',nombre:'INVERSIONES PATAGONIA SPA',folio:396,fd:46175,fv:46181,monto:2103801,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76783458-6',nombre:'SOCIEDAD MILLAHUE S.P.A.',folio:2620,fd:46175,fv:46181,monto:1499400,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76783458-6',nombre:'SOCIEDAD MILLAHUE S.P.A.',folio:2621,fd:46175,fv:46181,monto:1041250,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76034901-1',nombre:'CONCON MADERAS IMPREGNADAS LTDA.',folio:152712,fd:46175,fv:46181,monto:2349060,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76320553-3',nombre:'SERV. HIDRAULICOS CORREA ACEVEDO LTDA.',folio:1309,fd:46175,fv:46181,monto:399840,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'76320553-3',nombre:'SERV. HIDRAULICOS CORREA ACEVEDO LTDA.',folio:1310,fd:46175,fv:46181,monto:963900,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'77980615-4',nombre:'COMERCIALIZADORA Y TRANSPORTE VOLCAN LTDA.',folio:320,fd:46175,fv:46181,monto:41563582,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'77535131-4',nombre:'SOCIEDAD FORESTAL LOS CANELOS LTDA.',folio:228,fd:46175,fv:46181,monto:1876154,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'8145791-3',nombre:'FIDEL EDUARDO CARRASCO QUIJADA',folio:1497,fd:46175,fv:46181,monto:1752870,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'11374697-1',nombre:'DAVID AURELIANO LUNA CHAMORRO',folio:389,fd:46175,fv:46181,monto:13743846,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Forestal Río Claro',rut:'77762370-2',nombre:'MADERAS Y MAQUINARIAS LIMITADA',folio:1440,fd:46175,fv:46178,monto:2055844,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Forestal Río Claro',rut:'77762370-2',nombre:'MADERAS Y MAQUINARIAS LIMITADA',folio:1441,fd:46175,fv:46178,monto:3789912,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Logística y Transporte',rut:'77225200-5',nombre:'ARRENDADORA DE VEHICULOS S.A.',folio:544911,fd:46175,fv:46181,monto:4185096,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'76383239-2',nombre:'UNIDAD CENTRAL DE CERTIFICACION ORIGEN',folio:223780,fd:46172,fv:46178,monto:13308,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'76383239-2',nombre:'UNIDAD CENTRAL DE CERTIFICACION ORIGEN',folio:223844,fd:46172,fv:46178,monto:13308,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'77257297-2',nombre:'YUSEN LOGISTICS CHILE SPA',folio:20860,fd:46172,fv:46178,monto:95200,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'77257297-2',nombre:'YUSEN LOGISTICS CHILE SPA',folio:20861,fd:46172,fv:46178,monto:685440,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'77257297-2',nombre:'YUSEN LOGISTICS CHILE SPA',folio:20864,fd:46172,fv:46178,monto:1123360,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'77257297-2',nombre:'YUSEN LOGISTICS CHILE SPA',folio:20866,fd:46172,fv:46178,monto:1808800,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'76746755-9',nombre:'INTERMEDIACION TRANSPORTE MONTECINOS',folio:1767,fd:46172,fv:46178,monto:4522000,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'77257297-2',nombre:'YUSEN LOGISTICS CHILE SPA',folio:20907,fd:46175,fv:46181,monto:666400,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'96908970-K',nombre:'San Antonio Terminal Internacional S.A.',folio:1306306,fd:46172,fv:46178,monto:63481,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'96908970-K',nombre:'San Antonio Terminal Internacional S.A.',folio:1306307,fd:46172,fv:46178,monto:95222,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'96908970-K',nombre:'San Antonio Terminal Internacional S.A.',folio:1306308,fd:46172,fv:46178,monto:158704,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'77257297-2',nombre:'YUSEN LOGISTICS CHILE SPA',folio:15907,fd:46172,fv:46178,monto:10013396,ev:'🟡 Riesgo Moderado'},
+  {empresa:'Exportadora Río Claro',rut:'76042965-1',nombre:'ORION SEGUROS GENERALES S.A',folio:679503,fd:46175,fv:46181,monto:44699,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'96908870-3',nombre:'TERMINAL PACIFICO SUR VAP S A',folio:739633,fd:46175,fv:46181,monto:16197,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'96908870-3',nombre:'TERMINAL PACIFICO SUR VAP S A',folio:740198,fd:46175,fv:46181,monto:16197,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'96908870-3',nombre:'TERMINAL PACIFICO SUR VAP S A',folio:740261,fd:46175,fv:46181,monto:16197,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'76042965-1',nombre:'ORION SEGUROS GENERALES S.A',folio:679511,fd:46175,fv:46181,monto:40971,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'76042965-1',nombre:'ORION SEGUROS GENERALES S.A',folio:679516,fd:46175,fv:46181,monto:93431,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'76042965-1',nombre:'ORION SEGUROS GENERALES S.A',folio:679566,fd:46175,fv:46181,monto:9670,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'76042965-1',nombre:'ORION SEGUROS GENERALES S.A',folio:679586,fd:46175,fv:46181,monto:20157,ev:'🟢 Cumplimiento Óptimo'},
+  {empresa:'Exportadora Río Claro',rut:'76042965-1',nombre:'ORION SEGUROS GENERALES S.A',folio:679652,fd:46175,fv:46181,monto:22993,ev:'🟢 Cumplimiento Óptimo'},
+];
+
+// ── JSONBin API ──
+async function initBin() {
+  if (BIN_ID) return true;
+  try {
+    const r = await fetch(JSONBIN_URL, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Master-Key':JSONBIN_KEY,'X-Bin-Name':'facturas-rioclaro','X-Bin-Private':'false'},
+      body: JSON.stringify({decisions:{}, activity:[], users:{}})
+    });
+    const d = await r.json();
+    if (d.metadata && d.metadata.id) {
+      BIN_ID = d.metadata.id;
+      localStorage.setItem('frc_bin_id', BIN_ID);
+      return true;
+    }
+    return false;
+  } catch(e) { return false; }
+}
+
+async function readBin() {
+  if (!BIN_ID) return null;
+  try {
+    const r = await fetch(`${JSONBIN_URL}/${BIN_ID}/latest`, {
+      headers:{'X-Master-Key':JSONBIN_KEY}
+    });
+    const d = await r.json();
+    return d.record || null;
+  } catch(e) { return null; }
+}
+
+async function writeBin(data) {
+  if (!BIN_ID) return false;
+  try {
+    const resp = await fetch(`${JSONBIN_URL}/${BIN_ID}`, {
+      method:'PUT',
+      headers:{'Content-Type':'application/json','X-Master-Key':JSONBIN_KEY,'X-Bin-Versioning':'false'},
+      body: JSON.stringify(data)
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      console.error('writeBin error:', resp.status, err);
+      return false;
+    }
+    return true;
+  } catch(e) { console.error('writeBin exception:', e); return false; }
+}
+
+// ── Chips ──
+const chipRow = document.getElementById('chipRow');
+KNOWN.forEach(u => {
+  const c = document.createElement('span');
+  c.className = 'chip'; c.textContent = u;
+  c.onclick = () => { document.querySelectorAll('.chip').forEach(x=>x.classList.remove('sel')); c.classList.add('sel'); document.getElementById('nameInput').value = u; };
+  chipRow.appendChild(c);
+});
+document.getElementById('nameInput').addEventListener('keydown', e => { if(e.key==='Enter') entrar(); });
+
+async function entrar() {
+  const nombre = document.getElementById('nameInput').value.trim();
+  if (!nombre) { document.getElementById('nameInput').style.borderColor='var(--red)'; return; }
+  currentUser = nombre;
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  document.getElementById('userLbl').textContent = currentUser;
+  document.getElementById('avatarIcon').textContent = initials(currentUser);
+  // Show upload button only for authorized user
+  const UPLOAD_AUTH = ['FRANCISCO GUTIERREZ'];
+  document.getElementById('siiMenu').style.display = UPLOAD_AUTH.includes(currentUser) ? 'inline-block' : 'none';
+  setSyncState('syncing');
+  const ok = await initBin();
+  if (ok) {
+    await syncNow(true);
+    startPolling();
+    notif('info', '👋 Bienvenido/a ' + currentUser + ' — sincronizando en tiempo real');
+  } else {
+    setSyncState('err');
+    notif('err', 'No se pudo conectar con la base de datos. Verifica tu conexión.');
+  }
+}
+
+function salir() {
+  stopPolling();
+  currentUser = null; decisions = {}; activity = [];
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('nameInput').value = '';
+  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('sel'));
+}
+
+// ── Sync ──
+function setSyncState(s) {
+  const p = document.getElementById('syncPill');
+  const t = document.getElementById('syncTxt');
+  if(s==='ok'){p.className='sync-pill ok';t.textContent='Sincronizado';}
+  else if(s==='syncing'){p.className='sync-pill syncing';t.textContent='Sincronizando...';}
+  else{p.className='sync-pill err';t.textContent='Error de conexión';}
+}
+
+async function syncNow(force) {
+  setSyncState('syncing');
+  const data = await readBin();
+  if (!data) { setSyncState('err'); return; }
+
+  // Load facturas from bin - always sync
+  if (data.facturas && data.facturas.length) {
+    const currentHash = facturas.map(f=>String(f.folio)).sort().join(',');
+    const remoteHash = data.facturas.map(f=>String(f.folio)).sort().join(',');
+    if (currentHash !== remoteHash) {
+      facturas.splice(0, facturas.length, ...data.facturas);
+      updateStats(); rG();
+      if (!force) notif('info', '🔄 Facturas actualizadas por ' + (data.uploadedBy || 'otro usuario'));
+    }
+  }
+  // Always show fecha informe
+  if (data.fechaInforme) {
+    const pill = document.getElementById('fechaInformePill');
+    if (pill) { pill.style.display = 'inline-flex'; }
+    const txt = document.getElementById('fechaInformeTxt');
+    if (txt) txt.textContent = exD(data.fechaInforme);
+  }
+  // Merge decisions: remote wins except for current user's own decisions
+  const remote = data.decisions || {};
+  Object.keys(remote).forEach(k => {
+    if (!decisions[k] || decisions[k].resp !== currentUser) decisions[k] = remote[k];
+  });
+
+  // Merge activity
+  if (data.activity) {
+    const existing = new Set(activity.map(a=>`${a.folio}_${a.resp}_${a.dt}`));
+    (data.activity||[]).forEach(a => { if(!existing.has(`${a.folio}_${a.resp}_${a.dt}`)) activity.push(a); });
+    activity.sort((a,b)=>b.dt>a.dt?1:-1);
+  }
+
+  // Online users
+  const users = data.users || {};
+  const now = Date.now();
+  const active = Object.entries(users).filter(([u,t])=>now-new Date(t).getTime()<300000 && u!==currentUser);
+  document.getElementById('onlineSpan').textContent = active.length ? active.length+' más conectado'+(active.length>1?'s':'') : '';
+
+  // Register self
+  users[currentUser] = new Date().toISOString();
+  await writeBin({
+    facturas: facturas.length ? facturas : undefined,
+    fechaInforme: data.fechaInforme,
+    uploadedBy: data.uploadedBy,
+    decisions,
+    activity: activity.slice(0,50),
+    users
+  });
+  setSyncState('ok');
+  updateStats(); rG();
+}
+
+function startPolling() { stopPolling(); pollTimer = setInterval(()=>syncNow(false), 8000); }
+function stopPolling() { if(pollTimer){clearInterval(pollTimer);pollTimer=null;} }
+
+// ── Decisions ──
+async function onDecision(key, sel) {
+  const val = sel.value;
+  if (!val) return;
+  const now = new Date();
+  const dt = now.toLocaleDateString('es-CL')+' '+now.toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
+  const f = facturas.find(r=>dk(r)===key);
+  decisions[key] = {val, dt, resp:currentUser};
+  activity.unshift({key,val,resp:currentUser,dt,nombre:f?f.nombre:'',folio:f?f.folio:''});
+  sel.className='dec '+val; sel.disabled=true;
+  const tr=sel.closest('tr');
+  tr.querySelector('.rtxt').textContent=currentUser+' · '+dt;
+  tr.querySelector('.ulk').style.display='inline-block';
+  updateStats();
+  notif('ok', val==='aprobada'?'✓ Aprobada y sincronizada':'✗ Rechazada y sincronizada');
+  await syncNow(false);
+}
+
+async function unlock(key) {
+  const dec=decisions[key];
+  if(dec&&dec.resp!==currentUser){notif('err','Solo '+dec.resp+' puede desbloquear esta decisión');return;}
+  if(!confirm('¿Desbloquear esta decisión?')) return;
+  delete decisions[key];
+  await syncNow(false);
+  rG(); updateStats();
+}
+
+// ── Stats & Render ──
+function updateStats() {
+  const ap=Object.values(decisions).filter(d=>d.val==='aprobada').length;
+  const re=Object.values(decisions).filter(d=>d.val==='rechazada').length;
+  document.getElementById('sT').textContent=facturas.length;
+  document.getElementById('sA').textContent=ap;
+  document.getElementById('sR').textContent=re;
+  document.getElementById('sP').textContent=facturas.length-ap-re;
+}
+
+function rG() {
+  const emp=document.getElementById('fg-e').value;
+  const est=document.getElementById('fg-s').value;
+  const vf=document.getElementById('fg-v').value;
+  const bus=document.getElementById('fg-b').value.toLowerCase();
+  let html='';
+  facturas.forEach(r=>{
+    if(emp&&r.empresa!==emp) return;
+    const key=dk(r); const dec=decisions[key]; const dv=dec?dec.val:'';
+    if(est==='pendiente'&&dv) return;
+    if(est==='aprobada'&&dv!=='aprobada') return;
+    if(est==='rechazada'&&dv!=='rechazada') return;
+    if(vf&&vcls(r.ev||'')!==vf) return;
+    if(bus&&!r.nombre.toLowerCase().includes(bus)&&!String(r.folio).includes(bus)&&!r.rut.includes(bus)) return;
+    const locked=!!dec; const canUnlock=dec&&dec.resp===currentUser;
+    const rt=dec?dec.resp+' · '+dec.dt:'—';
+    html+=`<tr>
+      <td title="${r.empresa}">${r.empresa}</td><td>${r.rut}</td>
+      <td title="${r.nombre}">${r.nombre}</td><td class="folio">${r.folio}</td>
+      <td>${exD(r.fd)}</td><td>${exD(r.fv)}</td>
+      <td class="monto">${fmtM(r.monto)}</td>
+      <td>${r.ev?vBadge(r.ev):'-'}</td>
+      <td><select class="dec${locked?' '+dv:''}" ${locked?'disabled':''} onchange="onDecision('${key}',this)">
+        <option value="">— Decidir —</option>
+        <option value="aprobada"${dv==='aprobada'?' selected':''}>✓ Aprobar</option>
+        <option value="rechazada"${dv==='rechazada'?' selected':''}>✗ Rechazar</option>
+      </select></td>
+      <td style="display:flex;align-items:center;gap:5px;overflow:visible">
+        <span class="rtxt" style="font-size:10px;font-family:var(--mono);color:var(--txt2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${rt}</span>
+        <button class="ulk" onclick="unlock('${key}')" style="display:${canUnlock?'inline-block':'none'}">🔓</button>
+      </td>
+    </tr>`;
+  });
+  document.getElementById('tbG').innerHTML=html||`<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--txt3);font-family:var(--mono)">Sin resultados</td></tr>`;
+}
+
+function rS() {
+  const emp=document.getElementById('fs-e').value;
+  const vf=document.getElementById('fs-v').value;
+  const est=document.getElementById('fs-s').value;
+  const bus=document.getElementById('fs-b').value.toLowerCase();
+  let html=''; let n=0;
+  facturas.forEach(r=>{
+    const abr=r.empresa.includes('Forestal')?'FRC':r.empresa.includes('Export')?'EXP':'LYT';
+    if(emp&&abr!==emp) return;
+    if(vf&&vcls(r.ev||'')!==vf) return;
+    const key=dk(r); const dec=decisions[key]; const dv=dec?dec.val:'';
+    if(est==='pendiente'&&dv) return;
+    if(est==='aprobada'&&dv!=='aprobada') return;
+    if(est==='rechazada'&&dv!=='rechazada') return;
+    if(bus&&!r.nombre.toLowerCase().includes(bus)&&!String(r.folio).includes(bus)&&!r.rut.includes(bus)) return;
+    n++;
+    html+=`<tr><td>${n}</td><td>${r.rut}</td><td title="${r.nombre}">${r.nombre}</td><td class="folio">${r.folio}</td><td>${exD(r.fd)}</td><td>${exD(r.fv)}</td><td class="monto">${fmtM(r.monto)}</td><td>${r.ev?vBadge(r.ev):'-'}</td><td><span style="font-size:10px;font-family:var(--mono);padding:2px 6px;border-radius:3px;background:var(--surface2);color:var(--txt2)">${abr}</span></td><td>${eBadge(dv)}</td></tr>`;
+  });
+  document.getElementById('tbS').innerHTML=html||`<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--txt3);font-family:var(--mono)">Sin resultados</td></tr>`;
+}
+
+function renderFeed() {
+  const fl=document.getElementById('feedList');
+  if(!activity.length){fl.innerHTML='<div style="padding:20px;text-align:center;color:var(--txt3);font-size:12px;font-family:var(--mono)">Sin actividad aún</div>';return;}
+  fl.innerHTML=activity.slice(0,25).map(a=>`<div class="fi2">
+    <span class="fdot ${a.val==='aprobada'?'ok':'rej'}"></span>
+    <div class="ftxt"><strong>${a.resp}</strong> ${a.val==='aprobada'?'aprobó':'rechazó'} folio <strong>${a.folio}</strong><small>${a.nombre}</small></div>
+    <span class="ftime">${a.dt}</span>
+  </div>`).join('');
+}
+
+function renderProgreso() {
+  const empresas=['Forestal Río Claro','Exportadora Río Claro','Logística y Transporte'];
+  document.getElementById('progreso').innerHTML=empresas.map(emp=>{
+    const rows=facturas.filter(r=>r.empresa===emp);
+    const total=rows.length;
+    const ap=rows.filter(r=>decisions[dk(r)]?.val==='aprobada').length;
+    const re=rows.filter(r=>decisions[dk(r)]?.val==='rechazada').length;
+    const pct=Math.round((ap+re)/total*100);
+    const sn=emp.replace(' Río Claro','').replace('Logística y Transporte','Logística');
+    return `<div class="pbar-wrap">
+      <div class="pbar-lbl"><span>${sn}</span><span>${pct}%</span></div>
+      <div class="pbar"><div class="pbar-fill" style="width:${pct}%"></div></div>
+      <div class="pbar-sub"><span style="color:var(--green)">✓ ${ap}</span><span style="color:var(--red)">✗ ${re}</span><span style="color:var(--amber)">◯ ${total-ap-re}</span></div>
+    </div>`;
+  }).join('');
+}
+
+function showTab(t) {
+  ['g','s','a'].forEach(id=>document.getElementById('t'+id).style.display=id===t?'':'none');
+  document.querySelectorAll('.tab').forEach((el,i)=>el.classList.toggle('active',['g','s','a'][i]===t));
+  if(t==='a'){renderFeed();renderProgreso();}
+  if(t==='s') rS();
+}
+
+function clearF() {
+  ['fg-e','fg-s','fg-v'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('fg-b').value=''; rG();
+}
+
+function notif(type,msg) {
+  const el=document.getElementById('notif');
+  el.className='notif show '+type; el.textContent=msg;
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'),4500);
+}
+
+function exportXlsx() {
+  if(!window.XLSX){notif('err','Cargando librería...');return;}
+  const wb=XLSX.utils.book_new();
+  const rows=[['Empresa','RUT','Proveedor','Folio','Fecha Docto','Venc. SII','Monto','Estado Vencimiento','Decisión','Responsable','Fecha']];
+  facturas.forEach(r=>{
+    const d=decisions[dk(r)];
+    rows.push([r.empresa,r.rut,r.nombre,r.folio,exD(r.fd),exD(r.fv),r.monto,r.ev||'',d?d.val:'pendiente',d?d.resp:'',d?d.dt:'']);
+  });
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols']=[20,12,32,8,12,12,14,24,12,18,16].map(w=>({wch:w}));
+  XLSX.utils.book_append_sheet(wb,ws,'Gestión');
+  XLSX.writeFile(wb,'Facturas_RioClaro_'+new Date().toLocaleDateString('es-CL').replace(/\//g,'-')+'.xlsx');
+  notif('ok','↓ Excel exportado');
+}
+
+async function cargarSII(file) {
+  if (!file) return;
+  const un = document.getElementById('uploadNotif');
+  un.className = 'notif show info'; un.textContent = 'Leyendo archivo...';
+  const reader = new FileReader();
+  reader.onload = async function(e) {
+    try {
+      const wb = XLSX.read(e.target.result, {type:'binary', cellDates:false});
+      const sh = wb.Sheets['Facturas SII'];
+      if (!sh) { un.className='notif show err'; un.textContent='Error: No se encontro la hoja "Facturas SII"'; return; }
+      const rows = XLSX.utils.sheet_to_json(sh, {header:1, defval:''});
+      const headers = rows[0].map(h => String(h).trim().toLowerCase());
+      const ci = k => headers.findIndex(h => h.includes(k.toLowerCase()));
+      const iRut=ci('rut proveedor'), iNom=ci('razon social'), iFol=ci('folio');
+      const iFDoc=ci('fecha docto'), iFVen=ci('fecha de vencimiento sii'), iMon=ci('monto total');
+      const iEV=ci('estado vencimiento'), iAbr=ci('abreviaci'), iArea=ci('área'), iFInf=ci('fecha informe');
+      const dataRows = rows.slice(1).filter(r => r[iFol]);
+      const fechas = dataRows.map(r => Number(r[iFInf])).filter(f => f && !isNaN(f));
+      if (!fechas.length) { un.className='notif show err'; un.textContent='Error: No se encontro columna Fecha Informe'; return; }
+      const maxFecha = Math.max(...fechas);
+      const filtered = dataRows.filter(r => Number(r[iFInf]) === maxFecha);
+      const empMap = {'FRC':'Forestal Río Claro','EXP':'Exportadora Río Claro','LYT':'Logística y Transporte','frc':'Forestal Río Claro','exp':'Exportadora Río Claro','lyt':'Logística y Transporte'};
+      const nuevas = filtered.map(r => ({
+        empresa: empMap[String(r[iAbr]).trim()] || String(r[iAbr]||'').trim(),
+        rut: String(r[iRut]||'').trim(),
+        nombre: String(r[iNom]||'').trim(),
+        folio: r[iFol],
+        fd: Number(r[iFDoc])||0,
+        fv: Number(r[iFVen])||0,
+        monto: Number(r[iMon])||0,
+        ev: String(r[iEV]||'').trim(),
+        area: String(r[iArea]||'').trim()
+      })).filter(r => r.rut && r.folio);
+      if (!nuevas.length) { un.className='notif show err'; un.textContent='Error: Sin facturas para la fecha mas reciente'; return; }
+      facturas.splice(0, facturas.length, ...nuevas);
+      const newKeys = new Set(nuevas.map(f => dk(f)));
+      Object.keys(decisions).forEach(k => { if (!newKeys.has(k)) delete decisions[k]; });
+      un.textContent = 'Guardando en la nube...';
+      const binData = await readBin() || {};
+      // Full reset: new file = clean slate (keep only users)
+      const freshBin = {
+        facturas: nuevas,
+        fechaInforme: maxFecha,
+        uploadedBy: currentUser,
+        decisions: {},
+        activity: [],
+        users: binData.users || {}
+      };
+      decisions = {};
+      activity = [];
+      const writeOk = await writeBin(freshBin);
+      if (!writeOk) {
+        un.className = 'notif show err';
+        un.textContent = 'Error al guardar en la nube. Intenta de nuevo.';
+        return;
+      }
+      un.className = 'notif show ok';
+      un.textContent = '✓ ' + nuevas.length + ' facturas cargadas · Fecha informe: ' + exD(maxFecha) + ' · Todos los usuarios veran los cambios en segundos';
+      document.getElementById('fechaInformePill').style.display = 'inline-flex';
+      document.getElementById('fechaInformeTxt').textContent = exD(maxFecha);
+      updateStats(); rG();
+      document.getElementById('uploadSII').value = '';
+      setTimeout(() => un.classList.remove('show'), 7000);
+    } catch(err) { un.className='notif show err'; un.textContent='Error: ' + err.message; }
+  };
+  reader.readAsBinaryString(file);
+}
+
+
+const SP_URL = 'https://gfrc-my.sharepoint.com/:x:/g/personal/mmolina_retamal_gfrc_cl/IQDUQsdPNPqCR5ApI4fe0o4kAZZXwXaYUQzvYTXN-MLrt8w?download=1';
+
+function toggleSIIMenu() {
+  const d = document.getElementById('siiDropdown');
+  d.style.display = d.style.display === 'none' ? '' : 'none';
+}
+function closeSIIMenu() {
+  document.getElementById('siiDropdown').style.display = 'none';
+}
+document.addEventListener('click', function(e) {
+  if (!document.getElementById('siiMenu').contains(e.target)) closeSIIMenu();
+});
+
+async function cargarDesdeSP() {
+  const un = document.getElementById('uploadNotif');
+  un.className = 'notif show info'; un.textContent = '☁️ Descargando desde SharePoint...';
+  try {
+    const resp = await fetch(SP_URL);
+    if (!resp.ok) throw new Error('No se pudo descargar el archivo (código ' + resp.status + ')');
+    const blob = await resp.blob();
+    const file = new File([blob], 'BD_Facturas_Pendientes.xlsx', {type: blob.type});
+    un.textContent = '☁️ Archivo descargado, procesando...';
+    await cargarSII(file);
+  } catch(err) {
+    un.className = 'notif show err';
+    un.textContent = '❌ Error al descargar desde SharePoint: ' + err.message;
+  }
+}
+
+</script>
+</body>
+</html>
