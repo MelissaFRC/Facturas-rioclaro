@@ -103,6 +103,60 @@ async function cargarDesdeSP() {
   }
 }
 
+
+// ── Maintenance window check ──
+function isMaintenanceTime() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sunday, 6=Saturday
+  if (day === 0 || day === 6) return false; // weekend = no block
+  const h = now.getHours();
+  const m = now.getMinutes();
+  const totalMins = h * 60 + m;
+  return totalMins >= 9 * 60 && totalMins < 10 * 60; // 9:00 to 10:00
+}
+
+function updateMaintenanceTimer() {
+  const now = new Date();
+  const end = new Date(now);
+  end.setHours(10, 0, 0, 0);
+  const diff = end - now;
+  if (diff <= 0) {
+    // Time is up - reload page
+    location.reload();
+    return;
+  }
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  document.getElementById('maintTimer').textContent =
+    String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+function checkMaintenance() {
+  if (isMaintenanceTime()) {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('maintenanceScreen').style.display = 'flex';
+    updateMaintenanceTimer();
+    setInterval(updateMaintenanceTimer, 1000);
+    return true;
+  }
+  return false;
+}
+
+// Check on load
+window.addEventListener('DOMContentLoaded', () => {
+  checkMaintenance();
+  // Re-check every minute in case user leaves page open
+  setInterval(() => {
+    if (isMaintenanceTime()) {
+      document.getElementById('loginScreen').style.display = 'none';
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('maintenanceScreen').style.display = 'flex';
+    }
+  }, 60000);
+});
+
 </script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
@@ -218,10 +272,38 @@ select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--r
 .pbar{height:5px;background:var(--surface2);border-radius:99px;overflow:hidden}
 .pbar-fill{height:100%;background:var(--green);border-radius:99px;transition:width 0.4s}
 .pbar-sub{display:flex;gap:12px;margin-top:3px;font-size:10px;font-family:var(--mono)}
+
+/* Maintenance screen */
+#maintenanceScreen{min-height:100vh;display:none;align-items:center;justify-content:center;background:var(--bg);padding:20px}
+.maint-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);width:100%;max-width:420px;overflow:hidden;text-align:center}
+.maint-top{background:#1C1B18;padding:28px 32px}
+.maint-top h2{color:#fff;font-size:18px;font-weight:500;margin-bottom:6px}
+.maint-top p{color:rgba(255,255,255,0.5);font-size:12px;font-family:var(--mono)}
+.maint-body{padding:28px 32px}
+.maint-icon{font-size:48px;margin-bottom:16px}
+.maint-title{font-size:15px;font-weight:500;margin-bottom:8px}
+.maint-msg{font-size:12px;color:var(--txt2);line-height:1.7;margin-bottom:20px}
+.maint-timer{font-family:var(--mono);font-size:22px;font-weight:300;color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r);padding:10px 20px;display:inline-block;margin-bottom:16px}
+.maint-note{font-size:11px;color:var(--txt3);font-family:var(--mono)}
 </style>
 </head>
 <body>
 
+<div id="maintenanceScreen">
+  <div class="maint-card">
+    <div class="maint-top">
+      <h2>Gestión de Facturas SII</h2>
+      <p>Forestal Río Claro · Sistema colaborativo</p>
+    </div>
+    <div class="maint-body">
+      <div class="maint-icon">🔒</div>
+      <div class="maint-title">Sistema en mantención</div>
+      <div class="maint-msg">El sistema se encuentra bloqueado entre las <strong>9:00 y 10:00 AM</strong> para permitir la descarga de la base de datos anterior y la carga de las facturas del día.<br><br>Por favor, intenta ingresar después de las 10:00 AM.</div>
+      <div class="maint-timer" id="maintTimer">--:--:--</div>
+      <div class="maint-note">Tiempo restante para que el sistema se habilite</div>
+    </div>
+  </div>
+</div>
 <div id="loginScreen">
   <div class="login-card">
     <div class="login-top">
@@ -822,6 +904,61 @@ async function cargarDesdeSP() {
   }
 }
 
+
+// ── Maintenance window check ──
+function isMaintenanceTime() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sunday, 6=Saturday
+  if (day === 0 || day === 6) return false; // weekend = no block
+  const h = now.getHours();
+  const m = now.getMinutes();
+  const totalMins = h * 60 + m;
+  return totalMins >= 9 * 60 && totalMins < 10 * 60; // 9:00 to 10:00
+}
+
+function updateMaintenanceTimer() {
+  const now = new Date();
+  const end = new Date(now);
+  end.setHours(10, 0, 0, 0);
+  const diff = end - now;
+  if (diff <= 0) {
+    // Time is up - reload page
+    location.reload();
+    return;
+  }
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  document.getElementById('maintTimer').textContent =
+    String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+function checkMaintenance() {
+  if (isMaintenanceTime()) {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('maintenanceScreen').style.display = 'flex';
+    updateMaintenanceTimer();
+    setInterval(updateMaintenanceTimer, 1000);
+    return true;
+  }
+  return false;
+}
+
+// Check on load
+window.addEventListener('DOMContentLoaded', () => {
+  checkMaintenance();
+  // Re-check every minute in case user leaves page open
+  setInterval(() => {
+    if (isMaintenanceTime()) {
+      document.getElementById('loginScreen').style.display = 'none';
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('maintenanceScreen').style.display = 'flex';
+    }
+  }, 60000);
+});
+
 </script>
 </body>
 </html>
+
