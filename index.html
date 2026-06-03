@@ -415,9 +415,9 @@ select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--r
 </div>
 
 <script>
-const JSONBIN_KEY = '$2a$10$OvelDABH3ngB4TYLNrCiLegP.BQHfiU9NjQZTLSzMCKylw.OEeRFu';
-const JSONBIN_URL = 'https://api.jsonbin.io/v3/b';
-let BIN_ID = '6a1604fe8ef04f45381ec5a9';
+const FIREBASE_URL = 'https://facturas-rioclaro-default-rtdb.firebaseio.com/facturas';
+
+
 
 const KNOWN = ["FRANCISCO GUTIERREZ","MELISSA MOLINA","ÁNGEL DURAN","PABLO MORALES","ADQUISICIONES","MARICEL NICOLAO","KARINA SEPÚLVEDA","CONTABILIDAD"];
 let currentUser = null;
@@ -497,50 +497,26 @@ let facturas = [
 ];
 
 // ── JSONBin API ──
-async function initBin() {
-  if (BIN_ID) return true;
-  try {
-    const r = await fetch(JSONBIN_URL, {
-      method:'POST',
-      headers:{'Content-Type':'application/json','X-Master-Key':JSONBIN_KEY,'X-Bin-Name':'facturas-rioclaro','X-Bin-Private':'false'},
-      body: JSON.stringify({decisions:{}, activity:[], users:{}})
-    });
-    const d = await r.json();
-    if (d.metadata && d.metadata.id) {
-      BIN_ID = d.metadata.id;
-      localStorage.setItem('frc_bin_id', BIN_ID);
-      return true;
-    }
-    return false;
-  } catch(e) { return false; }
-}
+async function initBin() { return true; }
 
 async function readBin() {
-  if (!BIN_ID) return null;
   try {
-    const r = await fetch(`${JSONBIN_URL}/${BIN_ID}/latest`, {
-      headers:{'X-Master-Key':JSONBIN_KEY}
-    });
-    const d = await r.json();
-    return d.record || null;
+    const r = await fetch(FIREBASE_URL + '.json');
+    if (!r.ok) return null;
+    return await r.json();
   } catch(e) { return null; }
 }
 
 async function writeBin(data) {
-  if (!BIN_ID) return false;
   try {
-    const resp = await fetch(`${JSONBIN_URL}/${BIN_ID}`, {
+    const resp = await fetch(FIREBASE_URL + '.json', {
       method:'PUT',
-      headers:{'Content-Type':'application/json','X-Master-Key':JSONBIN_KEY,'X-Bin-Versioning':'false'},
+      headers:{'Content-Type':'application/json'},
       body: JSON.stringify(data)
     });
-    if (!resp.ok) {
-      const err = await resp.text();
-      console.error('writeBin error:', resp.status, err);
-      return false;
-    }
+    if (!resp.ok) { console.error('Firebase write error:', resp.status); return false; }
     return true;
-  } catch(e) { console.error('writeBin exception:', e); return false; }
+  } catch(e) { console.error('Firebase exception:', e); return false; }
 }
 
 // ── Chips ──
