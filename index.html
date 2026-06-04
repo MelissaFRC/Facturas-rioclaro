@@ -61,6 +61,10 @@ async function cargarSII(file) {
         un.textContent = 'Error al guardar en la nube. Intenta de nuevo.';
         return;
       }
+      // Force local state reset immediately
+      decisions = {};
+      activity = [];
+      facturas.splice(0, facturas.length, ...nuevas);
       un.className = 'notif show ok';
       un.textContent = '✓ ' + nuevas.length + ' facturas cargadas · Fecha informe: ' + exD(maxFecha) + ' · Todos los usuarios veran los cambios en segundos';
       document.getElementById('fechaInformePill').style.display = 'inline-flex';
@@ -604,9 +608,12 @@ async function syncNow(force) {
     const currentHash = facturas.map(f=>String(f.folio)).sort().join(',');
     const remoteHash = data.facturas.map(f=>String(f.folio)).sort().join(',');
     if (currentHash !== remoteHash) {
+      // New file uploaded - full reset
       facturas.splice(0, facturas.length, ...data.facturas);
+      decisions = {};
+      activity = [];
       updateStats(); rG();
-      if (!force) notif('info', '🔄 Facturas actualizadas por ' + (data.uploadedBy || 'otro usuario'));
+      if (!force) notif('info', '🔄 Facturas del día actualizadas por ' + (data.uploadedBy || 'otro usuario') + ' — decisiones anteriores eliminadas');
     }
   }
   // Always show fecha informe
@@ -862,6 +869,10 @@ async function cargarSII(file) {
         un.textContent = 'Error al guardar en la nube. Intenta de nuevo.';
         return;
       }
+      // Force local state reset immediately
+      decisions = {};
+      activity = [];
+      facturas.splice(0, facturas.length, ...nuevas);
       un.className = 'notif show ok';
       un.textContent = '✓ ' + nuevas.length + ' facturas cargadas · Fecha informe: ' + exD(maxFecha) + ' · Todos los usuarios veran los cambios en segundos';
       document.getElementById('fechaInformePill').style.display = 'inline-flex';
