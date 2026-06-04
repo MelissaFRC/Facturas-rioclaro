@@ -719,6 +719,9 @@ async function cargarSII(file) {
       decisions = {};
       activity = [];
       localFechaInforme = maxFecha;
+      // Borrar explicitamente decisions y activity de Firebase antes de escribir
+      await fetch(FIREBASE_URL + '/decisions.json', {method:'PUT', headers:{'Content-Type':'application/json'}, body:'{}'});
+      await fetch(FIREBASE_URL + '/activity.json', {method:'PUT', headers:{'Content-Type':'application/json'}, body:'[]'});
       const writeOk = await writeBin(freshBin);
       if (!writeOk) {
         un.className = 'notif show err';
