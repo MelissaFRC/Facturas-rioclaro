@@ -266,7 +266,7 @@ select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--r
 </div>
 
 <script>
-const FIREBASE_URL = 'https://facturas-rioclaro-default-rtdb.firebaseio.com/facturas';
+const FIREBASE_URL = 'https://facturas-rioclaro-default-rtdb.firebaseio.com/gestion';
 
 
 
@@ -275,6 +275,7 @@ let currentUser = null;
 let decisions = {};
 let activity = [];
 let pollTimer = null;
+let currentFechaInforme = null;
 
 const exD = n => { if(!n||isNaN(n)) return ''; const ms=Math.round((n-25569)*86400000); const d=new Date(ms); const utc=new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()); return utc.toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric'}); };
 const fmtM = n => n?'$'+Math.round(n).toLocaleString('es-CL'):'-';
@@ -444,17 +445,26 @@ async function syncNow(force) {
   const data = await readBin();
   if (data === null) { setSyncState('err'); return; }
 
-  // Load facturas from bin - always sync
-  if (data.facturas && data.facturas.length) {
-    const currentHash = facturas.map(f=>String(f.folio)).sort().join(',');
-    const remoteHash = data.facturas.map(f=>String(f.folio)).sort().join(',');
-    if (currentHash !== remoteHash) {
-      // New file uploaded - full reset
+  // Load facturas from bin - detect new upload by fechaInforme change
+  const remoteFecha = data.fechaInforme || null;
+  const facturasChanged = data.facturas && data.facturas.length &&
+    facturas.map(f=>String(f.folio)).sort().join(',') !== data.facturas.map(f=>String(f.folio)).sort().join(',');
+  const fechaChanged = remoteFecha && currentFechaInforme && remoteFecha !== currentFechaInforme;
+
+  if (facturasChanged || fechaChanged) {
+    // New file uploaded - full reset locally
+    if (data.facturas && data.facturas.length) {
       facturas.splice(0, facturas.length, ...data.facturas);
-      decisions = {};
-      activity = [];
-      updateStats(); rG();
-      if (!force) notif('info', '🔄 Facturas del día actualizadas por ' + (data.uploadedBy || 'otro usuario') + ' — decisiones anteriores eliminadas');
+    }
+    decisions = {};
+    activity = [];
+    currentFechaInforme = remoteFecha;
+    updateStats(); rG();
+    if (!force) notif('info', '🔄 Facturas del día actualizadas — decisiones anteriores eliminadas');
+  } else if (remoteFecha && !currentFechaInforme) {
+    currentFechaInforme = remoteFecha;
+    if (data.facturas && data.facturas.length) {
+      facturas.splice(0, facturas.length, ...data.facturas);
     }
   }
   // Always show fecha informe
@@ -464,17 +474,18 @@ async function syncNow(force) {
     const txt = document.getElementById('fechaInformeTxt');
     if (txt) txt.textContent = exD(data.fechaInforme);
   }
-  // Merge decisions: remote wins except for current user's own decisions
-  const remote = data.decisions || {};
-  Object.keys(remote).forEach(k => {
-    if (!decisions[k] || decisions[k].resp !== currentUser) decisions[k] = remote[k];
-  });
-
-  // Merge activity
-  if (data.activity) {
-    const existing = new Set(activity.map(a=>`${a.folio}_${a.resp}_${a.dt}`));
-    (data.activity||[]).forEach(a => { if(!existing.has(`${a.folio}_${a.resp}_${a.dt}`)) activity.push(a); });
-    activity.sort((a,b)=>b.dt>a.dt?1:-1);
+  // Merge decisions only if same fecha informe
+  if (!fechaChanged && !facturasChanged) {
+    const remote = data.decisions || {};
+    Object.keys(remote).forEach(k => {
+      if (!decisions[k] || decisions[k].resp !== currentUser) decisions[k] = remote[k];
+    });
+    // Merge activity
+    if (data.activity) {
+      const existing = new Set(activity.map(a=>`${a.folio}_${a.resp}_${a.dt}`));
+      (data.activity||[]).forEach(a => { if(!existing.has(`${a.folio}_${a.resp}_${a.dt}`)) activity.push(a); });
+      activity.sort((a,b)=>b.dt>a.dt?1:-1);
+    }
   }
 
   // Online users
@@ -705,9 +716,10 @@ async function cargarSII(file) {
         activity: [],
         users: binData.users || {}
       };
-      // Wipe old data first - delete activity and decisions separately
-      await fetch(FIREBASE_URL + '/activity.json', {method:'DELETE'});
-      await fetch(FIREBASE_URL + '/decisions.json', {method:'DELETE'});
+      // Nuclear reset: delete entire Firebase node and rewrite
+      const BASE_URL = FIREBASE_URL.replace('/facturas','');
+      await fetch(BASE_URL + '.json', {method:'DELETE'});
+      await new Promise(r => setTimeout(r, 500)); // wait for delete to propagate
       const writeOk = await writeBin(freshBin);
       if (!writeOk) {
         un.className = 'notif show err';
@@ -716,6 +728,7 @@ async function cargarSII(file) {
       }
       un.className = 'notif show ok';
       un.textContent = '✓ ' + nuevas.length + ' facturas cargadas · Fecha informe: ' + exD(maxFecha) + ' · Todos los usuarios veran los cambios en segundos';
+      currentFechaInforme = maxFecha;
       document.getElementById('fechaInformePill').style.display = 'inline-flex';
       document.getElementById('fechaInformeTxt').textContent = exD(maxFecha);
       updateStats(); rG();
