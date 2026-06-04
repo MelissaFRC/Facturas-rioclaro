@@ -313,7 +313,11 @@ select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--r
     <div class="login-body">
       <label class="field-lbl">¿Quién eres?</label>
       <div class="chips" id="chipRow"></div>
-      <input class="fi" id="nameInput" placeholder="O escribe tu nombre..." maxlength="40" />
+      <input class="fi" id="nameInput" placeholder="O escribe tu nombre..." maxlength="40" oninput="checkPasswordField()" />
+      <div id="passwordField" style="display:none;margin-bottom:16px">
+        <input class="fi" id="passwordInput" type="password" placeholder="Contraseña de administrador..." style="margin-bottom:0" onkeydown="if(event.key==='Enter') entrar()" />
+        <p style="font-size:11px;color:var(--red);margin-top:5px;display:none" id="passwordError">Contraseña incorrecta</p>
+      </div>
       <button class="btn-enter" onclick="entrar()">Entrar →</button>
     </div>
   </div>
@@ -420,6 +424,7 @@ const FIREBASE_URL = 'https://facturas-rioclaro-default-rtdb.firebaseio.com/fact
 
 
 const KNOWN = ["FRANCISCO GUTIERREZ","MELISSA MOLINA","ÁNGEL DURAN","PABLO MORALES","ADQUISICIONES","MARICEL NICOLAO","KARINA SEPÚLVEDA","CONTABILIDAD"];
+const ADMIN_USERS = ["FRANCISCO GUTIERREZ","MELISSA MOLINA"];
 let currentUser = null;
 let decisions = {};
 let activity = [];
@@ -525,22 +530,35 @@ const chipRow = document.getElementById('chipRow');
 KNOWN.forEach(u => {
   const c = document.createElement('span');
   c.className = 'chip'; c.textContent = u;
-  c.onclick = () => { document.querySelectorAll('.chip').forEach(x=>x.classList.remove('sel')); c.classList.add('sel'); document.getElementById('nameInput').value = u; };
+  c.onclick = () => { document.querySelectorAll('.chip').forEach(x=>x.classList.remove('sel')); c.classList.add('sel'); document.getElementById('nameInput').value = u; checkPasswordField(); };
   chipRow.appendChild(c);
 });
 document.getElementById('nameInput').addEventListener('keydown', e => { if(e.key==='Enter') entrar(); });
 
+function checkPasswordField() {
+  const nombre = document.getElementById('nameInput').value.trim().toUpperCase();
+  document.getElementById('passwordField').style.display = ADMIN_USERS.includes(nombre) ? '' : 'none';
+  document.getElementById('passwordError').style.display = 'none';
+}
+
 async function entrar() {
   const nombre = document.getElementById('nameInput').value.trim();
   if (!nombre) { document.getElementById('nameInput').style.borderColor='var(--red)'; return; }
+  if (ADMIN_USERS.includes(nombre)) {
+    const pwd = document.getElementById('passwordInput').value;
+    if (pwd !== 'forestal') {
+      document.getElementById('passwordError').style.display = 'block';
+      document.getElementById('passwordInput').style.borderColor = 'var(--red)';
+      return;
+    }
+  }
   currentUser = nombre;
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   document.getElementById('userLbl').textContent = currentUser;
   document.getElementById('avatarIcon').textContent = initials(currentUser);
   // Show upload button only for authorized user
-  const UPLOAD_AUTH = ['FRANCISCO GUTIERREZ'];
-  document.getElementById('siiMenu').style.display = UPLOAD_AUTH.includes(currentUser) ? 'inline-block' : 'none';
+  document.getElementById('siiMenu').style.display = ADMIN_USERS.includes(currentUser) ? 'inline-block' : 'none';
   setSyncState('syncing');
   const ok = await initBin();
   if (ok) {
@@ -559,6 +577,8 @@ function salir() {
   document.getElementById('app').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('nameInput').value = '';
+  document.getElementById('passwordInput').value = '';
+  document.getElementById('passwordField').style.display = 'none';
   document.querySelectorAll('.chip').forEach(x=>x.classList.remove('sel'));
 }
 
