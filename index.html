@@ -705,12 +705,9 @@ async function cargarSII(file) {
         activity: [],
         users: binData.users || {}
       };
-      // Wipe old data first
-      await fetch(FIREBASE_URL + '.json', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({})
-      });
+      // Wipe old data first - delete activity and decisions separately
+      await fetch(FIREBASE_URL + '/activity.json', {method:'DELETE'});
+      await fetch(FIREBASE_URL + '/decisions.json', {method:'DELETE'});
       const writeOk = await writeBin(freshBin);
       if (!writeOk) {
         un.className = 'notif show err';
@@ -818,3 +815,4 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
