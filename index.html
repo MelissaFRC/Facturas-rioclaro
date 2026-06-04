@@ -6,6 +6,7 @@
 <title>Gestión de Facturas SII — Río Claro</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
+
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -132,6 +133,7 @@ select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--r
 .maint-msg{font-size:12px;color:var(--txt2);line-height:1.7;margin-bottom:20px}
 .maint-timer{font-family:var(--mono);font-size:22px;font-weight:300;color:var(--amber);background:var(--amber-bg);border:1px solid var(--amber-bd);border-radius:var(--r);padding:10px 20px;display:inline-block;margin-bottom:16px}
 .maint-note{font-size:11px;color:var(--txt3);font-family:var(--mono)}
+
 </style>
 </head>
 <body>
@@ -145,7 +147,7 @@ select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--r
     <div class="maint-body">
       <div class="maint-icon">🔒</div>
       <div class="maint-title">Sistema en mantención</div>
-      <div class="maint-msg">El sistema se encuentra bloqueado entre las <strong>9:00 y 10:00 AM</strong> para permitir la descarga de la base de datos anterior y la carga de las facturas del día.<br><br>Por favor, intenta ingresar después de las <strong>10:00 AM</strong>.</div>
+      <div class="maint-msg">El sistema se encuentra bloqueado entre las <strong>9:00 y 10:00 AM</strong> para permitir la descarga de la base de datos anterior y la carga de las facturas del día.<br><br>Por favor, intenta ingresar después de las 10:00 AM.</div>
       <div class="maint-timer" id="maintTimer">--:--:--</div>
       <div class="maint-note">Tiempo restante para que el sistema se habilite</div>
     </div>
@@ -160,11 +162,7 @@ select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--r
     <div class="login-body">
       <label class="field-lbl">¿Quién eres?</label>
       <div class="chips" id="chipRow"></div>
-      <input class="fi" id="nameInput" placeholder="O escribe tu nombre..." maxlength="40" oninput="checkPasswordField()" />
-      <div id="passwordField" style="display:none;margin-bottom:16px">
-        <input class="fi" id="passwordInput" type="password" placeholder="Contraseña de administrador..." style="margin-bottom:0" onkeydown="if(event.key==='Enter') entrar()" />
-        <p style="font-size:11px;color:var(--red);margin-top:5px;display:none" id="passwordError">Contraseña incorrecta</p>
-      </div>
+      <input class="fi" id="nameInput" placeholder="O escribe tu nombre..." maxlength="40" />
       <button class="btn-enter" onclick="entrar()">Entrar →</button>
     </div>
   </div>
@@ -265,18 +263,20 @@ select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--r
   </div>
 </div>
 
+
 <script>
+// ── Config ──
 const FIREBASE_URL = 'https://facturas-rioclaro-default-rtdb.firebaseio.com/gestion';
-
-
-
 const KNOWN = ["FRANCISCO GUTIERREZ","MELISSA MOLINA","ÁNGEL DURAN","PABLO MORALES","ADQUISICIONES","MARICEL NICOLAO","KARINA SEPÚLVEDA","CONTABILIDAD"];
+const ADMIN_USERS = ['FRANCISCO GUTIERREZ', 'MELISSA MOLINA'];
+
 let currentUser = null;
 let decisions = {};
 let activity = [];
 let pollTimer = null;
-let currentFechaInforme = null;
+let localFechaInforme = null;
 
+// ── Helpers ──
 const exD = n => { if(!n||isNaN(n)) return ''; const ms=Math.round((n-25569)*86400000); const d=new Date(ms); const utc=new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()); return utc.toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric'}); };
 const fmtM = n => n?'$'+Math.round(n).toLocaleString('es-CL'):'-';
 const vcls = v => { if(!v) return ''; const s=v.toLowerCase(); if(s.includes('vencid')) return 'vencida'; if(s.includes('crít')||s.includes('crit')) return 'critico'; if(s.includes('moder')) return 'moderado'; return 'optimo'; };
@@ -285,6 +285,7 @@ const eBadge = v => { if(!v||v==='pendiente') return `<span class="badge b-pend"
 const dk = r => `${r.rut}_${r.folio}`;
 const initials = n => n.split(' ').slice(0,2).map(w=>w[0]).join('').toUpperCase();
 
+// ── Facturas data ──
 let facturas = [
   {empresa:'Forestal Río Claro',rut:'76039758-K',nombre:'Cia. Seguros Generales Continental S.A.',folio:304921,fd:46168,fv:46175,monto:1130748,ev:'⛔ Vencidas'},
   {empresa:'Forestal Río Claro',rut:'99225000-3',nombre:'CHUBB SEGUROS CHILE S.A.',folio:4244520,fd:46166,fv:46175,monto:12697,ev:'⛔ Vencidas'},
@@ -348,28 +349,23 @@ let facturas = [
   {empresa:'Exportadora Río Claro',rut:'76042965-1',nombre:'ORION SEGUROS GENERALES S.A',folio:679652,fd:46175,fv:46181,monto:22993,ev:'🟢 Cumplimiento Óptimo'},
 ];
 
-// ── JSONBin API ──
-async function initBin() { return true; }
-
+// ── Firebase ──
 async function readBin() {
   try {
     const r = await fetch(FIREBASE_URL + '.json');
     if (!r.ok) return {};
-    const data = await r.json();
-    return data || {};
+    return await r.json() || {};
   } catch(e) { return null; }
 }
 
 async function writeBin(data) {
   try {
     const resp = await fetch(FIREBASE_URL + '.json', {
-      method:'PUT',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(data)
+      method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
     });
     if (!resp.ok) { console.error('Firebase write error:', resp.status); return false; }
     return true;
-  } catch(e) { console.error('Firebase exception:', e); return false; }
+  } catch(e) { console.error('Firebase error:', e); return false; }
 }
 
 // ── Chips ──
@@ -377,23 +373,27 @@ const chipRow = document.getElementById('chipRow');
 KNOWN.forEach(u => {
   const c = document.createElement('span');
   c.className = 'chip'; c.textContent = u;
-  c.onclick = () => { document.querySelectorAll('.chip').forEach(x=>x.classList.remove('sel')); c.classList.add('sel'); document.getElementById('nameInput').value = u; checkPasswordField(); };
+  c.onclick = () => {
+    document.querySelectorAll('.chip').forEach(x=>x.classList.remove('sel'));
+    c.classList.add('sel');
+    document.getElementById('nameInput').value = u;
+    checkPasswordField();
+  };
   chipRow.appendChild(c);
 });
 document.getElementById('nameInput').addEventListener('keydown', e => { if(e.key==='Enter') entrar(); });
 
 function checkPasswordField() {
   const nombre = document.getElementById('nameInput').value.trim().toUpperCase();
-  const isAdmin = ADMIN_USERS.includes(nombre);
-  document.getElementById('passwordField').style.display = isAdmin ? '' : 'none';
+  document.getElementById('passwordField').style.display = ADMIN_USERS.includes(nombre) ? '' : 'none';
   document.getElementById('passwordError').style.display = 'none';
 }
 
+// ── Login ──
 async function entrar() {
   const nombre = document.getElementById('nameInput').value.trim();
   if (!nombre) { document.getElementById('nameInput').style.borderColor='var(--red)'; return; }
-  // Check password for admin users
-  if (ADMIN_USERS.includes(nombre.toUpperCase()) || ADMIN_USERS.includes(nombre)) {
+  if (ADMIN_USERS.includes(nombre)) {
     const pwd = document.getElementById('passwordInput').value;
     if (pwd !== 'forestal') {
       document.getElementById('passwordError').style.display = 'block';
@@ -406,28 +406,21 @@ async function entrar() {
   document.getElementById('app').style.display = 'flex';
   document.getElementById('userLbl').textContent = currentUser;
   document.getElementById('avatarIcon').textContent = initials(currentUser);
-  // Show upload button only for admin users
   document.getElementById('siiMenu').style.display = ADMIN_USERS.includes(currentUser) ? 'inline-block' : 'none';
-  // Check access
   if (!checkAccess(currentUser)) return;
   setSyncState('syncing');
-  const ok = await initBin();
-  if (ok) {
-    await syncNow(true);
-    startPolling();
-    notif('info', '👋 Bienvenido/a ' + currentUser + ' — sincronizando en tiempo real');
-  } else {
-    setSyncState('err');
-    notif('err', 'No se pudo conectar con la base de datos. Verifica tu conexión.');
-  }
+  await syncNow(true);
+  startPolling();
+  notif('info', '👋 Bienvenido/a ' + currentUser + ' — sincronizando en tiempo real');
 }
 
 function salir() {
   stopPolling();
-  currentUser = null; decisions = {}; activity = [];
+  currentUser = null; decisions = {}; activity = []; localFechaInforme = null;
   document.getElementById('app').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('nameInput').value = '';
+  document.getElementById('passwordInput').value = '';
   document.querySelectorAll('.chip').forEach(x=>x.classList.remove('sel'));
 }
 
@@ -445,47 +438,48 @@ async function syncNow(force) {
   const data = await readBin();
   if (data === null) { setSyncState('err'); return; }
 
-  // Load facturas from bin - detect new upload by fechaInforme change
   const remoteFecha = data.fechaInforme || null;
-  const facturasChanged = data.facturas && data.facturas.length &&
-    facturas.map(f=>String(f.folio)).sort().join(',') !== data.facturas.map(f=>String(f.folio)).sort().join(',');
-  const fechaChanged = remoteFecha && currentFechaInforme && remoteFecha !== currentFechaInforme;
 
-  if (facturasChanged || fechaChanged) {
-    // New file uploaded - full reset locally
-    if (data.facturas && data.facturas.length) {
-      facturas.splice(0, facturas.length, ...data.facturas);
-    }
+  // Detect new upload: fecha changed or facturas list changed
+  const remoteHash = (data.facturas||[]).map(f=>String(f.folio)).sort().join(',');
+  const localHash = facturas.map(f=>String(f.folio)).sort().join(',');
+  const isNewUpload = remoteFecha && localFechaInforme && remoteFecha !== localFechaInforme;
+  const facturasChanged = data.facturas && data.facturas.length && remoteHash !== localHash;
+
+  if (isNewUpload || (facturasChanged && remoteFecha !== localFechaInforme)) {
+    // New day file - FULL RESET
+    facturas.splice(0, facturas.length, ...data.facturas);
     decisions = {};
     activity = [];
-    currentFechaInforme = remoteFecha;
+    localFechaInforme = remoteFecha;
     updateStats(); rG();
-    if (!force) notif('info', '🔄 Facturas del día actualizadas — decisiones anteriores eliminadas');
-  } else if (remoteFecha && !currentFechaInforme) {
-    currentFechaInforme = remoteFecha;
-    if (data.facturas && data.facturas.length) {
+    if (!force) notif('info', '🔄 Facturas del día actualizadas — gestión anterior eliminada');
+  } else {
+    // Same day - just sync facturas if changed
+    if (facturasChanged) {
       facturas.splice(0, facturas.length, ...data.facturas);
+      if (!localFechaInforme) localFechaInforme = remoteFecha;
     }
-  }
-  // Always show fecha informe
-  if (data.fechaInforme) {
-    const pill = document.getElementById('fechaInformePill');
-    if (pill) { pill.style.display = 'inline-flex'; }
-    const txt = document.getElementById('fechaInformeTxt');
-    if (txt) txt.textContent = exD(data.fechaInforme);
-  }
-  // Merge decisions only if same fecha informe
-  if (!fechaChanged && !facturasChanged) {
+    // Merge decisions
     const remote = data.decisions || {};
     Object.keys(remote).forEach(k => {
       if (!decisions[k] || decisions[k].resp !== currentUser) decisions[k] = remote[k];
     });
     // Merge activity
-    if (data.activity) {
+    if (data.activity && data.activity.length) {
       const existing = new Set(activity.map(a=>`${a.folio}_${a.resp}_${a.dt}`));
-      (data.activity||[]).forEach(a => { if(!existing.has(`${a.folio}_${a.resp}_${a.dt}`)) activity.push(a); });
+      data.activity.forEach(a => { if(!existing.has(`${a.folio}_${a.resp}_${a.dt}`)) activity.push(a); });
       activity.sort((a,b)=>b.dt>a.dt?1:-1);
     }
+  }
+
+  // Show fecha informe
+  if (remoteFecha) {
+    if (!localFechaInforme) localFechaInforme = remoteFecha;
+    const pill = document.getElementById('fechaInformePill');
+    if (pill) { pill.style.display = 'inline-flex'; }
+    const txt = document.getElementById('fechaInformeTxt');
+    if (txt) txt.textContent = exD(remoteFecha);
   }
 
   // Online users
@@ -494,16 +488,17 @@ async function syncNow(force) {
   const active = Object.entries(users).filter(([u,t])=>now-new Date(t).getTime()<300000 && u!==currentUser);
   document.getElementById('onlineSpan').textContent = active.length ? active.length+' más conectado'+(active.length>1?'s':'') : '';
 
-  // Register self
+  // Write back with updated user timestamp
   users[currentUser] = new Date().toISOString();
   await writeBin({
-    facturas: facturas.length ? facturas : undefined,
-    fechaInforme: data.fechaInforme,
+    facturas: data.facturas || facturas,
+    fechaInforme: remoteFecha || localFechaInforme,
     uploadedBy: data.uploadedBy,
     decisions,
     activity: activity.slice(0,50),
     users
   });
+
   setSyncState('ok');
   updateStats(); rG();
 }
@@ -538,7 +533,7 @@ async function unlock(key) {
   rG(); updateStats();
 }
 
-// ── Stats & Render ──
+// ── Render ──
 function updateStats() {
   const ap=Object.values(decisions).filter(d=>d.val==='aprobada').length;
   const re=Object.values(decisions).filter(d=>d.val==='rechazada').length;
@@ -619,7 +614,7 @@ function renderProgreso() {
   const empresas=['Forestal Río Claro','Exportadora Río Claro','Logística y Transporte'];
   document.getElementById('progreso').innerHTML=empresas.map(emp=>{
     const rows=facturas.filter(r=>r.empresa===emp);
-    const total=rows.length;
+    const total=rows.length; if(!total) return '';
     const ap=rows.filter(r=>decisions[dk(r)]?.val==='aprobada').length;
     const re=rows.filter(r=>decisions[dk(r)]?.val==='rechazada').length;
     const pct=Math.round((ap+re)/total*100);
@@ -665,6 +660,29 @@ function exportXlsx() {
   notif('ok','↓ Excel exportado');
 }
 
+// ── Cargar SII ──
+const SP_URL = 'https://gfrc-my.sharepoint.com/:x:/g/personal/mmolina_retamal_gfrc_cl/IQDUQsdPNPqCR5ApI4fe0o4kAZZXwXaYUQzvYTXN-MLrt8w?download=1';
+
+function toggleSIIMenu() {
+  const d = document.getElementById('siiDropdown');
+  d.style.display = d.style.display === 'none' ? '' : 'none';
+}
+function closeSIIMenu() { document.getElementById('siiDropdown').style.display = 'none'; }
+document.addEventListener('click', function(e) {
+  if (!document.getElementById('siiMenu').contains(e.target)) closeSIIMenu();
+});
+
+async function cargarDesdeSP() {
+  const un = document.getElementById('uploadNotif');
+  un.className = 'notif show info'; un.textContent = '☁️ Descargando desde SharePoint...';
+  try {
+    const resp = await fetch(SP_URL);
+    if (!resp.ok) throw new Error('No se pudo descargar (código ' + resp.status + ')');
+    const blob = await resp.blob();
+    await cargarSII(new File([blob], 'BD_Facturas_Pendientes.xlsx', {type: blob.type}));
+  } catch(err) { document.getElementById('uploadNotif').className='notif show err'; document.getElementById('uploadNotif').textContent='❌ Error SharePoint: ' + err.message; }
+}
+
 async function cargarSII(file) {
   if (!file) return;
   const un = document.getElementById('uploadNotif');
@@ -674,7 +692,7 @@ async function cargarSII(file) {
     try {
       const wb = XLSX.read(e.target.result, {type:'binary', cellDates:false});
       const sh = wb.Sheets['Facturas SII'];
-      if (!sh) { un.className='notif show err'; un.textContent='Error: No se encontro la hoja "Facturas SII"'; return; }
+      if (!sh) { un.className='notif show err'; un.textContent='Error: No se encontró la hoja "Facturas SII"'; return; }
       const rows = XLSX.utils.sheet_to_json(sh, {header:1, defval:''});
       const headers = rows[0].map(h => String(h).trim().toLowerCase());
       const ci = k => headers.findIndex(h => h.includes(k.toLowerCase()));
@@ -683,52 +701,40 @@ async function cargarSII(file) {
       const iEV=ci('estado vencimiento'), iAbr=ci('abreviaci'), iArea=ci('área'), iFInf=ci('fecha informe');
       const dataRows = rows.slice(1).filter(r => r[iFol]);
       const fechas = dataRows.map(r => Number(r[iFInf])).filter(f => f && !isNaN(f));
-      if (!fechas.length) { un.className='notif show err'; un.textContent='Error: No se encontro columna Fecha Informe'; return; }
+      if (!fechas.length) { un.className='notif show err'; un.textContent='Error: No se encontró columna Fecha Informe'; return; }
       const maxFecha = Math.max(...fechas);
       const filtered = dataRows.filter(r => Number(r[iFInf]) === maxFecha);
       const empMap = {'FRC':'Forestal Río Claro','EXP':'Exportadora Río Claro','LYT':'Logística y Transporte','frc':'Forestal Río Claro','exp':'Exportadora Río Claro','lyt':'Logística y Transporte'};
       const nuevas = filtered.map(r => ({
         empresa: empMap[String(r[iAbr]).trim()] || String(r[iAbr]||'').trim(),
-        rut: String(r[iRut]||'').trim(),
-        nombre: String(r[iNom]||'').trim(),
-        folio: r[iFol],
-        fd: Number(r[iFDoc])||0,
-        fv: Number(r[iFVen])||0,
-        monto: Number(r[iMon])||0,
-        ev: String(r[iEV]||'').trim(),
-        area: String(r[iArea]||'').trim()
+        rut: String(r[iRut]||'').trim(), nombre: String(r[iNom]||'').trim(),
+        folio: r[iFol], fd: Number(r[iFDoc])||0, fv: Number(r[iFVen])||0,
+        monto: Number(r[iMon])||0, ev: String(r[iEV]||'').trim(), area: String(r[iArea]||'').trim()
       })).filter(r => r.rut && r.folio);
-      if (!nuevas.length) { un.className='notif show err'; un.textContent='Error: Sin facturas para la fecha mas reciente'; return; }
-      facturas.splice(0, facturas.length, ...nuevas);
-      const newKeys = new Set(nuevas.map(f => dk(f)));
-      Object.keys(decisions).forEach(k => { if (!newKeys.has(k)) delete decisions[k]; });
+      if (!nuevas.length) { un.className='notif show err'; un.textContent='Error: Sin facturas para la fecha más reciente'; return; }
+
       un.textContent = 'Guardando en la nube...';
-      const binData = await readBin() || {};
-      // Full reset: first wipe Firebase completely, then write fresh data
+
+      // RESET COMPLETO: borrar todo y escribir desde cero
       decisions = {};
       activity = [];
+      localFechaInforme = maxFecha;
       facturas.splice(0, facturas.length, ...nuevas);
-      const freshBin = {
+
+      const users = (await readBin() || {}).users || {};
+      const writeOk = await writeBin({
         facturas: nuevas,
         fechaInforme: maxFecha,
         uploadedBy: currentUser,
         decisions: {},
         activity: [],
-        users: binData.users || {}
-      };
-      // Nuclear reset: delete entire Firebase node and rewrite
-      const BASE_URL = FIREBASE_URL.replace('/facturas','');
-      await fetch(BASE_URL + '.json', {method:'DELETE'});
-      await new Promise(r => setTimeout(r, 500)); // wait for delete to propagate
-      const writeOk = await writeBin(freshBin);
-      if (!writeOk) {
-        un.className = 'notif show err';
-        un.textContent = 'Error al guardar en la nube. Intenta de nuevo.';
-        return;
-      }
+        users
+      });
+
+      if (!writeOk) { un.className='notif show err'; un.textContent='Error al guardar. Intenta de nuevo.'; return; }
+
       un.className = 'notif show ok';
-      un.textContent = '✓ ' + nuevas.length + ' facturas cargadas · Fecha informe: ' + exD(maxFecha) + ' · Todos los usuarios veran los cambios en segundos';
-      currentFechaInforme = maxFecha;
+      un.textContent = '✓ ' + nuevas.length + ' facturas cargadas · Fecha: ' + exD(maxFecha) + ' · Gestión anterior eliminada';
       document.getElementById('fechaInformePill').style.display = 'inline-flex';
       document.getElementById('fechaInformeTxt').textContent = exD(maxFecha);
       updateStats(); rG();
@@ -739,40 +745,7 @@ async function cargarSII(file) {
   reader.readAsBinaryString(file);
 }
 
-
-const SP_URL = 'https://gfrc-my.sharepoint.com/:x:/g/personal/mmolina_retamal_gfrc_cl/IQDUQsdPNPqCR5ApI4fe0o4kAZZXwXaYUQzvYTXN-MLrt8w?download=1';
-
-function toggleSIIMenu() {
-  const d = document.getElementById('siiDropdown');
-  d.style.display = d.style.display === 'none' ? '' : 'none';
-}
-function closeSIIMenu() {
-  document.getElementById('siiDropdown').style.display = 'none';
-}
-document.addEventListener('click', function(e) {
-  if (!document.getElementById('siiMenu').contains(e.target)) closeSIIMenu();
-});
-
-async function cargarDesdeSP() {
-  const un = document.getElementById('uploadNotif');
-  un.className = 'notif show info'; un.textContent = '☁️ Descargando desde SharePoint...';
-  try {
-    const resp = await fetch(SP_URL);
-    if (!resp.ok) throw new Error('No se pudo descargar el archivo (código ' + resp.status + ')');
-    const blob = await resp.blob();
-    const file = new File([blob], 'BD_Facturas_Pendientes.xlsx', {type: blob.type});
-    un.textContent = '☁️ Archivo descargado, procesando...';
-    await cargarSII(file);
-  } catch(err) {
-    un.className = 'notif show err';
-    un.textContent = '❌ Error al descargar desde SharePoint: ' + err.message;
-  }
-}
-
-
-// ── Maintenance / Access control ──
-const ADMIN_USERS = ['FRANCISCO GUTIERREZ', 'MELISSA MOLINA'];
-
+// ── Mantencion / Acceso ──
 function isMaintenanceTime() {
   const now = new Date();
   const day = now.getDay();
@@ -783,34 +756,19 @@ function isMaintenanceTime() {
 
 function updateMaintenanceTimer() {
   const now = new Date();
-  const end = new Date(now);
-  end.setHours(10, 0, 0, 0);
+  const end = new Date(now); end.setHours(10, 0, 0, 0);
   const diff = end - now;
   if (diff <= 0) { location.reload(); return; }
-  const h = Math.floor(diff / 3600000);
-  const m = Math.floor((diff % 3600000) / 60000);
-  const s = Math.floor((diff % 60000) / 1000);
-  document.getElementById('maintTimer').textContent =
-    String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
-}
-
-function showMaintenance(msg) {
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('app').style.display = 'none';
-  document.getElementById('maintenanceScreen').style.display = 'flex';
-  if (msg) {
-    document.querySelector('.maint-msg').innerHTML = msg;
-    document.getElementById('maintTimer').style.display = 'none';
-    document.querySelector('.maint-note').style.display = 'none';
-  }
+  const h=Math.floor(diff/3600000), m=Math.floor((diff%3600000)/60000), s=Math.floor((diff%60000)/1000);
+  document.getElementById('maintTimer').textContent = String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
 }
 
 function checkAccess(user) {
-  // Admins always have access
   if (ADMIN_USERS.includes(user)) return true;
-  // Others blocked during maintenance window
   if (isMaintenanceTime()) {
-    showMaintenance(null); // show timer
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('maintenanceScreen').style.display = 'flex';
     setInterval(updateMaintenanceTimer, 1000);
     updateMaintenanceTimer();
     return false;
@@ -818,14 +776,15 @@ function checkAccess(user) {
   return true;
 }
 
-// Check on load for non-logged users during maintenance
 window.addEventListener('DOMContentLoaded', () => {
-  setInterval(() => {
-    if (!currentUser && isMaintenanceTime()) showMaintenance(null);
-  }, 60000);
+  if (!ADMIN_USERS.includes('') && isMaintenanceTime()) {
+    document.getElementById('maintenanceScreen').style.display = 'flex';
+    document.getElementById('loginScreen').style.display = 'none';
+    setInterval(updateMaintenanceTimer, 1000);
+    updateMaintenanceTimer();
+  }
 });
 
 </script>
 </body>
 </html>
-
