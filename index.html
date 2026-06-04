@@ -313,11 +313,7 @@ select.dec.rechazada{border-color:#F0B8B8;background:var(--red-bg);color:var(--r
     <div class="login-body">
       <label class="field-lbl">¿Quién eres?</label>
       <div class="chips" id="chipRow"></div>
-      <input class="fi" id="nameInput" placeholder="O escribe tu nombre..." maxlength="40" oninput="checkPasswordField()" />
-      <div id="passwordField" style="display:none;margin-bottom:16px">
-        <input class="fi" id="passwordInput" type="password" placeholder="Contraseña de administrador..." style="margin-bottom:0" onkeydown="if(event.key==='Enter') entrar()" />
-        <p style="font-size:11px;color:var(--red);margin-top:5px;display:none" id="passwordError">Contraseña incorrecta</p>
-      </div>
+      <input class="fi" id="nameInput" placeholder="O escribe tu nombre..." maxlength="40" />
       <button class="btn-enter" onclick="entrar()">Entrar →</button>
     </div>
   </div>
@@ -424,7 +420,6 @@ const FIREBASE_URL = 'https://facturas-rioclaro-default-rtdb.firebaseio.com/fact
 
 
 const KNOWN = ["FRANCISCO GUTIERREZ","MELISSA MOLINA","ÁNGEL DURAN","PABLO MORALES","ADQUISICIONES","MARICEL NICOLAO","KARINA SEPÚLVEDA","CONTABILIDAD"];
-const ADMIN_USERS = ["FRANCISCO GUTIERREZ","MELISSA MOLINA"];
 let currentUser = null;
 let decisions = {};
 let activity = [];
@@ -943,3 +938,4 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
