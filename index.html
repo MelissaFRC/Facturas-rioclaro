@@ -55,6 +55,7 @@ async function cargarSII(file) {
       };
       decisions = {};
       activity = [];
+      localFechaInforme = maxFecha;
       const writeOk = await writeBin(freshBin);
       if (!writeOk) {
         un.className = 'notif show err';
@@ -429,6 +430,7 @@ let currentUser = null;
 let decisions = {};
 let activity = [];
 let pollTimer = null;
+let localFechaInforme = null;
 
 const exD = n => { if(!n||isNaN(n)) return ''; const ms=Math.round((n-25569)*86400000); const d=new Date(ms); const utc=new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()); return utc.toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric'}); };
 const fmtM = n => n?'$'+Math.round(n).toLocaleString('es-CL'):'-';
@@ -573,7 +575,7 @@ async function entrar() {
 
 function salir() {
   stopPolling();
-  currentUser = null; decisions = {}; activity = [];
+  currentUser = null; decisions = {}; activity = []; localFechaInforme = null;
   document.getElementById('app').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('nameInput').value = '';
@@ -596,34 +598,52 @@ async function syncNow(force) {
   const data = await readBin();
   if (data === null) { setSyncState('err'); return; }
 
-  // Load facturas from bin - always sync
-  if (data.facturas && data.facturas.length) {
-    const currentHash = facturas.map(f=>String(f.folio)).sort().join(',');
-    const remoteHash = data.facturas.map(f=>String(f.folio)).sort().join(',');
-    if (currentHash !== remoteHash) {
+  const remoteFecha = data.fechaInforme || null;
+
+  // Detect if new file was uploaded (fecha changed)
+  if (remoteFecha && localFechaInforme && remoteFecha !== localFechaInforme) {
+    // Nueva fecha = reset completo local
+    decisions = {};
+    activity = [];
+    localFechaInforme = remoteFecha;
+    if (data.facturas && data.facturas.length) {
       facturas.splice(0, facturas.length, ...data.facturas);
-      updateStats(); rG();
-      if (!force) notif('info', '🔄 Facturas actualizadas por ' + (data.uploadedBy || 'otro usuario'));
+    }
+    updateStats(); rG();
+    if (!force) notif('info', '🔄 Facturas del día actualizadas — gestión anterior eliminada');
+  } else {
+    // Misma fecha - sincronizar normalmente
+    if (data.facturas && data.facturas.length) {
+      const currentHash = facturas.map(f=>String(f.folio)).sort().join(',');
+      const remoteHash = data.facturas.map(f=>String(f.folio)).sort().join(',');
+      if (currentHash !== remoteHash) {
+        facturas.splice(0, facturas.length, ...data.facturas);
+        updateStats(); rG();
+        if (!force) notif('info', '🔄 Facturas actualizadas por ' + (data.uploadedBy || 'otro usuario'));
+      }
+    }
+    // Merge decisions
+    const remote = data.decisions || {};
+    Object.keys(remote).forEach(k => {
+      if (!decisions[k] || decisions[k].resp !== currentUser) decisions[k] = remote[k];
+    });
+    // Merge activity
+    if (data.activity) {
+      const existing = new Set(activity.map(a=>`${a.folio}_${a.resp}_${a.dt}`));
+      (data.activity||[]).forEach(a => { if(!existing.has(`${a.folio}_${a.resp}_${a.dt}`)) activity.push(a); });
+      activity.sort((a,b)=>b.dt>a.dt?1:-1);
     }
   }
-  // Always show fecha informe
-  if (data.fechaInforme) {
+
+  // Guardar fecha local
+  if (remoteFecha && !localFechaInforme) localFechaInforme = remoteFecha;
+
+  // Show fecha informe
+  if (remoteFecha) {
     const pill = document.getElementById('fechaInformePill');
     if (pill) { pill.style.display = 'inline-flex'; }
     const txt = document.getElementById('fechaInformeTxt');
-    if (txt) txt.textContent = exD(data.fechaInforme);
-  }
-  // Merge decisions: remote wins except for current user's own decisions
-  const remote = data.decisions || {};
-  Object.keys(remote).forEach(k => {
-    if (!decisions[k] || decisions[k].resp !== currentUser) decisions[k] = remote[k];
-  });
-
-  // Merge activity
-  if (data.activity) {
-    const existing = new Set(activity.map(a=>`${a.folio}_${a.resp}_${a.dt}`));
-    (data.activity||[]).forEach(a => { if(!existing.has(`${a.folio}_${a.resp}_${a.dt}`)) activity.push(a); });
-    activity.sort((a,b)=>b.dt>a.dt?1:-1);
+    if (txt) txt.textContent = exD(remoteFecha);
   }
 
   // Online users
@@ -853,6 +873,7 @@ async function cargarSII(file) {
       };
       decisions = {};
       activity = [];
+      localFechaInforme = maxFecha;
       const writeOk = await writeBin(freshBin);
       if (!writeOk) {
         un.className = 'notif show err';
@@ -958,4 +979,3 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
-
