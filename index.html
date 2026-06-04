@@ -44,7 +44,10 @@ async function cargarSII(file) {
       Object.keys(decisions).forEach(k => { if (!newKeys.has(k)) delete decisions[k]; });
       un.textContent = 'Guardando en la nube...';
       const binData = await readBin() || {};
-      // Full reset: new file = clean slate (keep only users)
+      // Full reset: first wipe Firebase completely, then write fresh data
+      decisions = {};
+      activity = [];
+      facturas.splice(0, facturas.length, ...nuevas);
       const freshBin = {
         facturas: nuevas,
         fechaInforme: maxFecha,
@@ -53,18 +56,18 @@ async function cargarSII(file) {
         activity: [],
         users: binData.users || {}
       };
-      decisions = {};
-      activity = [];
+      // Wipe old data first
+      await fetch(FIREBASE_URL + '.json', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+      });
       const writeOk = await writeBin(freshBin);
       if (!writeOk) {
         un.className = 'notif show err';
         un.textContent = 'Error al guardar en la nube. Intenta de nuevo.';
         return;
       }
-      // Force local state reset immediately
-      decisions = {};
-      activity = [];
-      facturas.splice(0, facturas.length, ...nuevas);
       un.className = 'notif show ok';
       un.textContent = '✓ ' + nuevas.length + ' facturas cargadas · Fecha informe: ' + exD(maxFecha) + ' · Todos los usuarios veran los cambios en segundos';
       document.getElementById('fechaInformePill').style.display = 'inline-flex';
@@ -852,7 +855,10 @@ async function cargarSII(file) {
       Object.keys(decisions).forEach(k => { if (!newKeys.has(k)) delete decisions[k]; });
       un.textContent = 'Guardando en la nube...';
       const binData = await readBin() || {};
-      // Full reset: new file = clean slate (keep only users)
+      // Full reset: first wipe Firebase completely, then write fresh data
+      decisions = {};
+      activity = [];
+      facturas.splice(0, facturas.length, ...nuevas);
       const freshBin = {
         facturas: nuevas,
         fechaInforme: maxFecha,
@@ -861,18 +867,18 @@ async function cargarSII(file) {
         activity: [],
         users: binData.users || {}
       };
-      decisions = {};
-      activity = [];
+      // Wipe old data first
+      await fetch(FIREBASE_URL + '.json', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+      });
       const writeOk = await writeBin(freshBin);
       if (!writeOk) {
         un.className = 'notif show err';
         un.textContent = 'Error al guardar en la nube. Intenta de nuevo.';
         return;
       }
-      // Force local state reset immediately
-      decisions = {};
-      activity = [];
-      facturas.splice(0, facturas.length, ...nuevas);
       un.className = 'notif show ok';
       un.textContent = '✓ ' + nuevas.length + ' facturas cargadas · Fecha informe: ' + exD(maxFecha) + ' · Todos los usuarios veran los cambios en segundos';
       document.getElementById('fechaInformePill').style.display = 'inline-flex';
