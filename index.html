@@ -406,6 +406,8 @@ async function entrar() {
   document.getElementById('avatarIcon').textContent = initials(currentUser);
   // Show upload button only for authorized user
   document.getElementById('siiMenu').style.display = ADMIN_USERS.includes(currentUser) ? 'inline-block' : 'none';
+  // Check maintenance - admins bypass
+  if (checkMaintenance(currentUser)) return;
   setSyncState('syncing');
   const ok = await initBin();
   if (ok) {
@@ -780,7 +782,9 @@ function updateMaintenanceTimer() {
     String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
 }
 
-function checkMaintenance() {
+function checkMaintenance(user) {
+  // Admins always have access
+  if (user && ADMIN_USERS.includes(user)) return false;
   if (isMaintenanceTime()) {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('app').style.display = 'none';
@@ -792,15 +796,19 @@ function checkMaintenance() {
   return false;
 }
 
-// Check on load
+// Check on load (before login, no user yet)
 window.addEventListener('DOMContentLoaded', () => {
-  checkMaintenance();
-  // Re-check every minute in case user leaves page open
+  if (isMaintenanceTime()) {
+    document.getElementById('maintenanceScreen').style.display = 'flex';
+    document.getElementById('loginScreen').style.display = 'none';
+    updateMaintenanceTimer();
+    setInterval(updateMaintenanceTimer, 1000);
+  }
+  // Re-check every minute for non-admin users
   setInterval(() => {
-    if (isMaintenanceTime()) {
-      document.getElementById('loginScreen').style.display = 'none';
-      document.getElementById('app').style.display = 'none';
+    if (!currentUser && isMaintenanceTime()) {
       document.getElementById('maintenanceScreen').style.display = 'flex';
+      document.getElementById('loginScreen').style.display = 'none';
     }
   }, 60000);
 });
