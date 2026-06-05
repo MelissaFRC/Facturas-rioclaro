@@ -276,7 +276,6 @@ let currentUser = null;
 let decisions = {};
 let activity = [];
 let pollTimer = null;
-let localFechaInforme = null;
 
 const exD = n => { if(!n||isNaN(n)) return ''; const ms=Math.round((n-25569)*86400000); const d=new Date(ms); const utc=new Date(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate()); return utc.toLocaleDateString('es-CL',{day:'2-digit',month:'2-digit',year:'numeric'}); };
 const fmtM = n => n?'$'+Math.round(n).toLocaleString('es-CL'):'-';
@@ -421,7 +420,7 @@ async function entrar() {
 
 function salir() {
   stopPolling();
-  currentUser = null; decisions = {}; activity = []; localFechaInforme = null;
+  currentUser = null; decisions = {}; activity = [];
   document.getElementById('app').style.display = 'none';
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('nameInput').value = '';
@@ -444,69 +443,52 @@ async function syncNow(force) {
   const data = await readBin();
   if (data === null) { setSyncState('err'); return; }
 
-  const remoteFecha = data.fechaInforme || null;
-
-  // Si la fecha cambió => reset completo local
-  if (remoteFecha && localFechaInforme && remoteFecha !== localFechaInforme) {
-    decisions = {};
-    activity = [];
-    localFechaInforme = remoteFecha;
-    if (data.facturas && data.facturas.length) {
+  // Load facturas from bin - always sync
+  if (data.facturas && data.facturas.length) {
+    const currentHash = facturas.map(f=>String(f.folio)).sort().join(',');
+    const remoteHash = data.facturas.map(f=>String(f.folio)).sort().join(',');
+    if (currentHash !== remoteHash) {
       facturas.splice(0, facturas.length, ...data.facturas);
-    }
-    updateStats(); rG();
-    if (!force) notif('info', '🔄 Facturas del día actualizadas — gestión anterior eliminada');
-  } else {
-    // Misma fecha: cargar facturas si cambiaron
-    if (data.facturas && data.facturas.length) {
-      const localHash = facturas.map(f=>String(f.folio)).sort().join(',');
-      const remoteHash = data.facturas.map(f=>String(f.folio)).sort().join(',');
-      if (localHash !== remoteHash) {
-        facturas.splice(0, facturas.length, ...data.facturas);
-        if (!force) notif('info', '🔄 Facturas actualizadas');
-      }
-    }
-    // Leer decisions de Firebase (no escribir las locales de vuelta)
-    const remote = data.decisions || {};
-    Object.keys(remote).forEach(k => {
-      if (!decisions[k] || decisions[k].resp !== currentUser) decisions[k] = remote[k];
-    });
-    // Leer activity de Firebase
-    if (data.activity && data.activity.length) {
-      const existing = new Set(activity.map(a=>`${a.folio}_${a.resp}_${a.dt}`));
-      data.activity.forEach(a => { if(!existing.has(`${a.folio}_${a.resp}_${a.dt}`)) activity.push(a); });
-      activity.sort((a,b)=>b.dt>a.dt?1:-1);
+      updateStats(); rG();
+      if (!force) notif('info', '🔄 Facturas actualizadas por ' + (data.uploadedBy || 'otro usuario'));
     }
   }
-
-  // Guardar fecha local
-  if (remoteFecha && !localFechaInforme) localFechaInforme = remoteFecha;
-
-  // Mostrar fecha informe
-  if (remoteFecha) {
+  // Always show fecha informe
+  if (data.fechaInforme) {
     const pill = document.getElementById('fechaInformePill');
-    if (pill) pill.style.display = 'inline-flex';
+    if (pill) { pill.style.display = 'inline-flex'; }
     const txt = document.getElementById('fechaInformeTxt');
-    if (txt) txt.textContent = exD(remoteFecha);
+    if (txt) txt.textContent = exD(data.fechaInforme);
+  }
+  // Merge decisions: remote wins except for current user's own decisions
+  const remote = data.decisions || {};
+  Object.keys(remote).forEach(k => {
+    if (!decisions[k] || decisions[k].resp !== currentUser) decisions[k] = remote[k];
+  });
+
+  // Merge activity
+  if (data.activity) {
+    const existing = new Set(activity.map(a=>`${a.folio}_${a.resp}_${a.dt}`));
+    (data.activity||[]).forEach(a => { if(!existing.has(`${a.folio}_${a.resp}_${a.dt}`)) activity.push(a); });
+    activity.sort((a,b)=>b.dt>a.dt?1:-1);
   }
 
-  // Usuarios activos - solo actualizar timestamp propio, sin tocar decisions ni activity
+  // Online users
   const users = data.users || {};
   const now = Date.now();
   const active = Object.entries(users).filter(([u,t])=>now-new Date(t).getTime()<300000 && u!==currentUser);
   document.getElementById('onlineSpan').textContent = active.length ? active.length+' más conectado'+(active.length>1?'s':'') : '';
-  users[currentUser] = new Date().toISOString();
 
-  // Solo escribir users y facturas - NUNCA decisions ni activity en sync regular
+  // Register self
+  users[currentUser] = new Date().toISOString();
   await writeBin({
-    facturas: data.facturas || (facturas.length ? facturas : undefined),
-    fechaInforme: remoteFecha || localFechaInforme,
+    facturas: facturas.length ? facturas : undefined,
+    fechaInforme: data.fechaInforme,
     uploadedBy: data.uploadedBy,
-    decisions: data.decisions || {},
-    activity: data.activity || [],
+    decisions,
+    activity: activity.slice(0,50),
     users
   });
-
   setSyncState('ok');
   updateStats(); rG();
 }
@@ -718,10 +700,9 @@ async function cargarSII(file) {
       };
       decisions = {};
       activity = [];
-      localFechaInforme = maxFecha;
-      // Borrar explicitamente decisions y activity de Firebase antes de escribir
-      await fetch(FIREBASE_URL + '/decisions.json', {method:'PUT', headers:{'Content-Type':'application/json'}, body:'{}'});
-      await fetch(FIREBASE_URL + '/activity.json', {method:'PUT', headers:{'Content-Type':'application/json'}, body:'[]'});
+      // Borrar decisions y activity de Firebase antes de escribir
+      await fetch(FIREBASE_URL + '/decisions.json', {method:'DELETE'});
+      await fetch(FIREBASE_URL + '/activity.json', {method:'DELETE'});
       const writeOk = await writeBin(freshBin);
       if (!writeOk) {
         un.className = 'notif show err';
@@ -827,4 +808,5 @@ window.addEventListener('DOMContentLoaded', () => {
 </script>
 </body>
 </html>
+
 
